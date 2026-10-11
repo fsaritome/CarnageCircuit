@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="author" content="fsaritome">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Carnage Circuit</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -90,6 +91,17 @@ tr.me td{color:var(--haz);font-weight:700}
 .big-place{font-family:var(--display);font-size:clamp(40px,8vw,80px);line-height:1;color:var(--haz)}
 .dead{color:var(--blood)}
 
+.seg-wrap{display:flex;flex-direction:column;gap:6px}
+.seg{display:flex;flex-wrap:wrap;gap:0}
+.seg button{border-radius:0;margin-left:-1px;padding:.55em .9em;font-size:12px}
+.seg button:first-child{border-radius:3px 0 0 3px;margin-left:0}
+.seg button:last-child{border-radius:0 3px 3px 0}
+.seg button[aria-pressed="true"]{background:var(--haz);color:#111;border-color:var(--haz)}
+.byline{color:var(--dim);font-size:13px;letter-spacing:.06em}
+.byline b{color:var(--ink);font-weight:700}
+.credits dl{display:grid;grid-template-columns:auto 1fr;gap:8px 20px;margin:0;font-size:clamp(14px,1.8vw,17px)}
+.credits dt{color:var(--dim);font-weight:600;font-size:12px;letter-spacing:.14em;text-transform:uppercase;padding-top:3px}
+.credits dd{margin:0;font-weight:700;min-width:0;overflow-wrap:anywhere}
 .pad{display:none;justify-content:space-between;gap:10px}
 .pad .grp{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .pad button{width:60px;height:52px;padding:0;font-size:11px;touch-action:none}
@@ -109,7 +121,7 @@ tr.me td{color:var(--haz);font-weight:700}
     <div class="overlay" id="overlay"><div id="panel"></div></div>
   </div>
   <div class="foot">
-    <span>Arrows or WASD drive · Space fires · X drops a mine · Shift for nitro</span>
+    <span>Carnage Circuit · a game by fsaritome</span>
     <span class="row"><button id="bMute">Sound: on</button><button id="bPause">Pause</button></span>
   </div>
   <div class="pad" aria-label="Touch controls">
@@ -334,10 +346,23 @@ tr.me td{color:var(--haz);font-weight:700}
     { name: 'Mad Dog', color: '#e0742a', accent: '#2a1a10', skill: 0.95, boost: 0.3 },
   ];
   const ME = { name: 'You', color: HAZ, accent: '#151515' };
+  // Rival difficulty. spd: top speed, corner: cornering speed, aim: firing cone (rad), range: firing range,
+  // lead: how far ahead they aim, fire: fire-delay multiplier, up: extra upgrade levels, tough: damage they take,
+  // mine: mine-delay multiplier, rb: rubber band [when ahead, when behind]
+  const DIFF = {
+    easy:   { label: 'Easy',   spd: 0.93, corner: 0.92, aim: 0.10, range: 380, lead: 0,   fire: 1.4,  up: -1, tough: 0.75, mine: 1.6, rb: [0.93, 1.03] },
+    normal: { label: 'Normal', spd: 0.97, corner: 1.0,  aim: 0.14, range: 460, lead: 0.5, fire: 1.0,  up: 0,  tough: 0.55, mine: 1.0, rb: [0.96, 1.07] },
+    hard:   { label: 'Hard',   spd: 1.02, corner: 1.08, aim: 0.19, range: 540, lead: 1,   fire: 0.85, up: 1,  tough: 0.42, mine: 0.7, rb: [0.99, 1.1] },
+    brutal: { label: 'Brutal', spd: 1.07, corner: 1.16, aim: 0.25, range: 620, lead: 1,   fire: 0.7,  up: 2,  tough: 0.32, mine: 0.5, rb: [1.0, 1.14] },
+  };
+  const diffOf = () => DIFF[career && career.diff] || DIFF.normal;
+  let pickedDiff = 'normal';
+  try { pickedDiff = localStorage.getItem('carnage-circuit-diff') || 'normal'; } catch (_) {}
+  if (!DIFF[pickedDiff]) pickedDiff = 'normal';
   const PRIZE = [1000, 600, 350, 150], POINTS = [10, 6, 3, 1], KILL_BONUS = 300;
   const SAVE_KEY = 'carnage-circuit-career';
   let career = null;
-  const freshCareer = () => ({ race: 0, cash: 600, eng: 0, tire: 0, armor: 0, gun: 0, hp: 100, ammo: 100, mines: 3,
+  const freshCareer = () => ({ race: 0, diff: pickedDiff, cash: 600, eng: 0, tire: 0, armor: 0, gun: 0, hp: 100, ammo: 100, mines: 3,
     pts: Object.fromEntries([ME, ...RIVALS].map(d => [d.name, 0])) });
   function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(career)); } catch (_) {} }
   function load() { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return s && typeof s.race === 'number' ? s : null; } catch (_) { return null; } }
@@ -362,7 +387,7 @@ tr.me td{color:var(--haz);font-weight:700}
       x: p.x + p.nx * lat, y: p.y + p.ny * lat, a: p.a, vx: 0, vy: 0, fwd: 0, lat: 0,
       idx, lap: idx > track.N / 2 ? -1 : 0, finished: false, dead: false, deadT: 0,
       hp: cfg.hp, eng: cfg.eng, tire: cfg.tire, armor: cfg.armor, gun: cfg.gun, ammo: cfg.ammo, mines: cfg.mines,
-      turbo: 100, spd: cfg.spd, rb: 1, skill: cfg.skill || 1,
+      turbo: 100, spd: cfg.spd, rb: 1, skill: cfg.skill || 1, tough: cfg.tough || 1, fireMul: cfg.fireMul || 1,
       fireCd: 0, mineCd: 0, sndCd: 0, muzzle: 0, flash: 0, bloodT: 0, offroad: false, lastHit: null, lastHitT: -99, kills: 0,
       ai: { rev: 0, revSteer: 1, stuck: 0, lane: rand(-30, 30), laneT: rand(1, 4), mineCd: rand(3, 6), turboT: 0, boost: d.boost || 0 } };
   }
@@ -374,11 +399,12 @@ tr.me td{color:var(--haz);font-weight:700}
     bullets = []; mines = []; peds = []; pickups = []; parts = []; floats = []; msgs = []; finishOrder = [];
     const N = track.N;
     const grid = [[N - 14, -30], [N - 14, 30], [N - 40, -30], [N - 40, 30]];
-    const r = k.race;
+    const r = k.race, D = diffOf();
     cars = RIVALS.map((d, i) => makeCar(d, {
-      hp: 100, eng: clamp(Math.floor(r * 0.65 + d.boost), 0, 4), tire: clamp(Math.floor(r * 0.55 + d.boost), 0, 4),
-      armor: clamp(Math.floor(r * 0.5), 0, 4), gun: clamp(Math.floor(r * 0.45 + d.boost * 0.5), 0, 3),
-      ammo: 60 + r * 15, mines: 2 + Math.floor(r / 2), spd: d.skill * (0.9 + r * 0.012), skill: d.skill,
+      hp: 100, eng: clamp(Math.floor(r * 0.65 + d.boost) + D.up, 0, 4), tire: clamp(Math.floor(r * 0.55 + d.boost) + D.up, 0, 4),
+      armor: clamp(Math.floor(r * 0.5) + D.up, 0, 4), gun: clamp(Math.floor(r * 0.45 + d.boost * 0.5) + D.up, 0, 3),
+      ammo: Math.max(40, 60 + r * 15 + D.up * 25), mines: Math.max(1, 2 + Math.floor(r / 2) + D.up),
+      spd: d.skill * (D.spd * 0.93 + r * 0.012), skill: d.skill * D.corner, tough: D.tough, fireMul: D.fire,
     }, grid[i][0], grid[i][1]));
     player = makeCar(ME, { hp: k.hp, eng: k.eng, tire: k.tire, armor: k.armor, gun: k.gun, ammo: k.ammo, mines: k.mines, spd: 1 }, grid[3][0], grid[3][1]);
     cars.push(player);
@@ -430,7 +456,7 @@ tr.me td{color:var(--haz);font-weight:700}
 
   function hurt(c, amt, by) {
     if (c.dead || c.finished && !c.isPlayer && state === 'ending') return;
-    c.hp -= amt * (1 - c.armor * 0.12); c.flash = 0.08;
+    c.hp -= amt * (1 - c.armor * 0.12) * c.tough; c.flash = 0.08;
     if (by && by !== c) { c.lastHit = by; c.lastHitT = raceT; }
     if (c.hp <= 0) wreck(c);
   }
@@ -461,9 +487,9 @@ tr.me td{color:var(--haz);font-weight:700}
 
   function fire(c) {
     if (c.fireCd > 0 || c.ammo <= 0) return;
-    c.fireCd = 0.1 - c.gun * 0.016; c.ammo--; c.muzzle = 0.05;
+    c.fireCd = (0.1 - c.gun * 0.016) * c.fireMul; c.ammo--; c.muzzle = 0.05;
     const a = c.a + rand(-0.035, 0.035), ca = Math.cos(c.a), sa = Math.sin(c.a);
-    bullets.push({ x: c.x + ca * 22, y: c.y + sa * 22, vx: c.vx + Math.cos(a) * 980, vy: c.vy + Math.sin(a) * 980, life: 0.55, owner: c, idx: c.idx, dmg: 2.6 + c.gun * 1.15 });
+    bullets.push({ x: c.x + ca * 22, y: c.y + sa * 22, vx: c.vx + Math.cos(a) * 980, vy: c.vy + Math.sin(a) * 980, life: 0.55, owner: c, idx: c.idx, dmg: 2.2 + c.gun * 0.95 });
     if (c.sndCd <= 0) { sfx.gun(c.isPlayer ? 1 : near(c.x, c.y) * 0.7); c.sndCd = 0.07; }
   }
   function dropMine(c) {
@@ -493,20 +519,27 @@ tr.me td{color:var(--haz);font-weight:700}
     ai.turboT -= dt;
     if (curv < 0.22 && c.turbo > 25 && fwd > 220 && ai.turboT < -2 && Math.random() < 0.02 + ai.boost * 0.02) ai.turboT = rand(0.8, 1.6);
     ctl.turbo = ai.turboT > 0 && curv < 0.4;
-    const ca = Math.cos(c.a), sa = Math.sin(c.a);
+    const ca = Math.cos(c.a), sa = Math.sin(c.a), D = diffOf();
+    let hunt = null, huntA = 0.5;
+    ai.mineCd -= dt;
     for (const o of cars) {
       if (o === c || o.dead) continue;
       const dx = o.x - c.x, dy = o.y - c.y, d = hyp(dx, dy);
-      if (d < 440 && Math.abs(wrap(Math.atan2(dy, dx) - c.a)) < 0.13) ctl.fire = true;
-      ai.mineCd -= dt / cars.length;
-      if (d < 230 && dx * ca + dy * sa < -20 && ai.mineCd < 0 && c.mines > 0) { ctl.mine = true; ai.mineCd = rand(5, 10); }
+      // aim where the target will be when the bullets arrive
+      const t = d / 980 * D.lead, ax = dx + o.vx * t, ay = dy + o.vy * t;
+      const off = Math.abs(wrap(Math.atan2(ay, ax) - c.a));
+      if (d < D.range && off < D.aim) ctl.fire = true;
+      if (D.lead >= 1 && d < D.range && off < huntA) { hunt = Math.atan2(ay, ax); huntA = off; }
+      if (d < 230 && dx * ca + dy * sa < -20 && ai.mineCd < 0 && c.mines > 0) { ctl.mine = true; ai.mineCd = rand(5, 10) * D.mine; }
     }
+    // on Hard and Brutal, rivals nudge their line toward a target in front of them to land shots
+    if (hunt !== null && curv < 0.5) ctl.steer = clamp(ctl.steer * 0.65 + clamp(wrap(hunt - c.a) * 3, -1, 1) * 0.35, -1, 1);
     if (Math.abs(fwd) < 22 && state === 'race') {
       ai.stuck += dt;
       if (ai.stuck > 0.7) { ai.rev = rand(0.6, 1); ai.revSteer = -(Math.sign(diff) || 1); ai.stuck = 0; }
     } else ai.stuck = 0;
     // light rubber band so races stay close
-    if (!c.isPlayer && player) { const gap = (prog(c) - prog(player)) / N; c.rb = gap > 0.35 ? 0.95 : gap < -0.35 ? 1.06 : 1; }
+    if (!c.isPlayer && player) { const gap = (prog(c) - prog(player)) / N; c.rb = gap > 0.35 ? D.rb[0] : gap < -0.35 ? D.rb[1] : 1; }
     return ctl;
   }
 
@@ -795,7 +828,7 @@ tr.me td{color:var(--haz);font-weight:700}
     for (const c of cars) if (!c.isPlayer && !c.dead && inView(c.x, c.y)) { ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(c.name, c.x + 1, c.y - 23); ctx.fillStyle = '#fff'; ctx.fillText(c.name, c.x, c.y - 24); }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (state !== 'title') drawHud();
+    if (state !== 'title' && state !== 'credits') drawHud();
   }
 
   function bar(x, y, w, h, f, col, label) {
@@ -888,9 +921,11 @@ tr.me td{color:var(--haz);font-weight:700}
       <p class="eyebrow">Six races · four drivers · no rules</p>
       <h1>CARNAGE<br>CIRCUIT</h1>
       <p class="lede">Win prize money by finishing in the top three. Spend it on engine, tires, armor and guns. Shoot rivals, mine the racing line, and mind the spectators. Or don't.</p>
+      <div class="seg-wrap"><span class="eyebrow">Rival difficulty</span>${diffPicker(pickedDiff)}</div>
       <div class="row">
         <button class="go" data-act="new">New championship</button>
-        ${s ? `<button data-act="continue">Continue · race ${Math.min(s.race + 1, RACES)} of ${RACES}</button>` : ''}
+        ${s ? `<button data-act="continue">Continue · race ${Math.min(s.race + 1, RACES)} of ${RACES} · ${(DIFF[s.diff] || DIFF.normal).label}</button>` : ''}
+        <button data-act="credits">Credits</button>
       </div>
       <div class="keys">
         <span>Drive</span><b>Arrow keys or W A S D</b>
@@ -899,6 +934,30 @@ tr.me td{color:var(--haz);font-weight:700}
         <span>Nitro</span><b>Shift (or L)</b>
         <span>Pause · Mute</span><b>P · M</b>
       </div>
+      <p class="byline">A game by <b>fsaritome</b></p>
+    </div>`);
+  }
+
+  function diffPicker(cur) {
+    return `<div class="seg" role="group" aria-label="Rival difficulty">${Object.entries(DIFF).map(([key, d]) =>
+      `<button data-act="diff:${key}" aria-pressed="${key === cur}">${d.label}</button>`).join('')}</div>`;
+  }
+
+  function creditsScreen() {
+    state = 'credits';
+    showPanel(`<div class="stack credits">
+      <div class="hazard"></div>
+      <p class="eyebrow">Credits</p>
+      <h1>CARNAGE<br>CIRCUIT</h1>
+      <dl>
+        <dt>Created by</dt><dd>fsaritome</dd>
+        <dt>Game design and direction</dt><dd>fsaritome</dd>
+        <dt>Rival drivers</dt><dd>Grimm, Vex and Mad Dog</dd>
+        <dt>Inspired by</dt><dd>Death Rally (Remedy Entertainment, 1996)</dd>
+        <dt>Source</dt><dd>github.com/fsaritome/CarnageCircuit</dd>
+      </dl>
+      <p class="lede">No spectators were harmed outside of this browser tab.</p>
+      <div class="row"><button class="go" data-act="title">Back</button></div>
     </div>`);
   }
 
@@ -916,7 +975,7 @@ tr.me td{color:var(--haz);font-weight:700}
       `<tr class="${n === 'You' ? 'me' : ''}"><td>${i + 1}</td><td>${dot(colorOf(n))}${n}</td><td class="n">${p}</td></tr>`).join('');
     showPanel(`<div class="stack">
       <div class="g-head">
-        <div><p class="eyebrow">Garage · race ${k.race + 1} of ${RACES} · ${LAPS} laps</p><h2>Next: ${T.name}</h2></div>
+        <div><p class="eyebrow">Garage · race ${k.race + 1} of ${RACES} · ${LAPS} laps · ${diffOf().label}</p><h2>Next: ${T.name}</h2></div>
         <div class="cash">${money(k.cash)}</div>
       </div>
       <div class="hazard"></div>
@@ -933,6 +992,9 @@ tr.me td{color:var(--haz);font-weight:700}
           <div class="up"><span class="nm">Mines ${k.mines} / ${MAX_MINES}</span>
             <button data-act="mines" ${k.mines >= MAX_MINES || k.cash < mineCost ? 'disabled' : ''}>+3 for ${money(mineCost)}</button>
             <span class="ds">Arms 0.7s after dropping</span></div>
+          <h3 style="margin-top:14px">Rival difficulty</h3>
+          ${diffPicker(k.diff || 'normal')}
+          <p class="ds" style="margin-top:6px">Takes effect from the next race.</p>
           <h3 style="margin-top:14px">Championship</h3>
           <table><thead><tr><th>#</th><th>Driver</th><th class="n">Pts</th></tr></thead><tbody>${table}</tbody></table>
         </section>
@@ -982,7 +1044,8 @@ tr.me td{color:var(--haz);font-weight:700}
       <p class="lede">${won ? 'Six races, one survivor at the top. Your name goes on the trophy.' : 'You finished ' + ordinal(table.findIndex(t => t[0] === 'You') + 1) + ' overall. Upgrade earlier and keep your armor up.'}</p>
       <div class="card"><table><thead><tr><th>#</th><th>Driver</th><th class="n">Points</th></tr></thead>
       <tbody>${table.map(([n, p], i) => `<tr class="${n === 'You' ? 'me' : ''}"><td>${i + 1}</td><td>${dot(colorOf(n))}${n}</td><td class="n">${p}</td></tr>`).join('')}</tbody></table></div>
-      <div class="row"><button class="go" data-act="new">New championship</button><button data-act="title">Title screen</button></div>
+      <div class="row"><button class="go" data-act="new">New championship</button><button data-act="credits">Credits</button><button data-act="title">Title screen</button></div>
+      <p class="byline">Carnage Circuit · a game by <b>fsaritome</b></p>
     </div>`);
   }
 
@@ -1005,6 +1068,15 @@ tr.me td{color:var(--haz);font-weight:700}
     else if (act === 'race') setupRace();
     else if (act === 'garage') garage();
     else if (act === 'champ') champScreen();
+    else if (act === 'credits') creditsScreen();
+    else if (act.startsWith('diff:')) {
+      const key = act.slice(5);
+      if (DIFF[key]) {
+        pickedDiff = key; try { localStorage.setItem('carnage-circuit-diff', key); } catch (_) {}
+        if (state === 'garage') { k.diff = key; garage(); }
+        else panel.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+      }
+    }
     else if (act === 'resume') togglePause();
     else if (act === 'quit') { state = pausedFrom; player.hp = 0; player.dead = true; player.deadT = raceT; endRace(); }
     else if (act.startsWith('up:')) { const key = act.slice(3), cost = UP[key].cost[k[key]]; if (cost && k.cash >= cost) { k.cash -= cost; k[key]++; sfx.pickup(); } garage(); }
@@ -1047,9 +1119,9 @@ tr.me td{color:var(--haz);font-weight:700}
   function frame(ts) {
     const dt = Math.min(0.033, last ? (ts - last) / 1000 : 0); last = ts;
     if (state === 'race' || state === 'count' || state === 'ending') update(dt);
-    else if (state === 'title') attractUpdate(dt);
+    else if (state === 'title' || state === 'credits') attractUpdate(dt);
     updateAudio();
-    if (state === 'title' || state === 'paused' || state === 'race' || state === 'count' || state === 'ending') render();
+    if (state === 'title' || state === 'credits' || state === 'paused' || state === 'race' || state === 'count' || state === 'ending') render();
     else if (state === 'garage' || state === 'results' || state === 'champ') render();
     requestAnimationFrame(frame);
   }

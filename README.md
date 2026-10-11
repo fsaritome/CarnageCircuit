@@ -1,6 +1,8 @@
 # Carnage Circuit
 
-A top-down combat racer for the browser, inspired by the 1996 DOS classic Death Rally.
+A top-down combat racer for the browser by **fsaritome**, inspired by the 1996 DOS classic Death Rally.
+
+**Play it:** https://fsaritome.github.io/CarnageCircuit/
 
 Race three rivals over a six-race championship. Finish in the money, wreck your rivals for a bounty, and spend your winnings in the garage on engine, tires, armor and guns. Spectators wander onto the track. Mind them, or don't.
 
@@ -28,6 +30,20 @@ Touch devices get on-screen buttons.
 - Machine gun, mines, nitro, pickups (cash, repair, ammo, nitro)
 - Damage model with smoke, fire, explosions and persistent wrecks
 - AI rivals (Grimm, Vex, Mad Dog) that race the line, shoot, mine and dodge
+- Four rival difficulty levels (Easy, Normal, Hard, Brutal), switchable from the title screen or the garage
 - Prize money, kill bonuses, upgrades, repairs, championship points
 - Career progress saved in the browser (localStorage)
 - Synthesized sound effects via the Web Audio API
+
+## Difficulty
+
+| Level  | What changes |
+|--------|--------------|
+| Easy   | Slower rivals, fewer upgrades, poor aim, wreck sooner |
+| Normal | The baseline |
+| Hard   | Faster cornering, extra upgrades, lead their shots, steer to line up attacks, much tougher |
+| Brutal | All of Hard, turned up further |
+
+## Credits
+
+Created by **fsaritome**. Inspired by Death Rally (Remedy Entertainment, 1996).
