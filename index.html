@@ -648,6 +648,8 @@ tr.me td{color:var(--haz);font-weight:700}
     sfx.scream(near(b.x, b.y));
     if (by && by.isPlayer) {
       career.cash += 50;
+      if (raceT - (killBiker.lastT || -9) < 0.35) return; // one callout at a time when a whole gang goes up
+      killBiker.lastT = raceT;
       floats.push({ x: b.x, y: b.y - 14, text: how === 'char' ? pick(['BIKER BBQ', 'CHARGRILLED']) : how === 'blast' ? pick(['AIRMAIL', 'SPLATTERED', 'LIFTOFF']) : pick(['ROADKILL', 'HOOD ORNAMENT', 'TOLL PAID', 'SPEED BUMP']), life: 1.1, color: BLOOD });
     }
   }

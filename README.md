@@ -18,6 +18,8 @@ Open `index.html` in any modern browser. No build step, no install. It only fetc
 | Machine gun | Space (or J)            |
 | Drop mine   | X (or K)                |
 | Nitro       | Shift (or L)            |
+| Special     | E (or Enter)            |
+| Switch special | Q (or Tab)           |
 | Pause       | P or Esc                |
 | Mute        | M                       |
 
@@ -30,7 +32,9 @@ Touch devices get on-screen buttons.
 - Machine gun, mines, nitro, pickups (cash, repair, ammo, nitro)
 - Damage model with smoke, fire, explosions and persistent wrecks
 - AI rivals (Grimm, Vex, Mad Dog) that race the line, shoot, mine and dodge
-- Four rival difficulty levels (Easy, Normal, Hard, Brutal), switchable from the title screen or the garage
+- Five rival difficulty levels (Easy, Normal, Hard, Brutal, Insane), switchable from the title screen or the garage
+- Special weapons: rockets, heat seekers, flamethrower, burning oil drums
+- Final lap: the Iron Vultures biker gang blocks the track. Run them over, burn them, or blow them sky high
 - Prize money, kill bonuses, upgrades, repairs, championship points
 - Career progress saved in the browser (localStorage)
 - Synthesized sound effects via the Web Audio API
@@ -39,10 +43,22 @@ Touch devices get on-screen buttons.
 
 | Level  | What changes |
 |--------|--------------|
-| Easy   | Slower rivals, fewer upgrades, poor aim, wreck sooner |
-| Normal | The baseline |
-| Hard   | Faster cornering, extra upgrades, lead their shots, steer to line up attacks, much tougher |
-| Brutal | All of Hard, turned up further |
+| Easy   | Rivals drive loosely, carry no special weapons |
+| Normal | Rivals take the racing line, lead their shots, carry a few specials |
+| Hard   | Faster, grippier, more upgrades, more aggressive toward you |
+| Brutal | Hard, turned up further |
+| Insane | Good luck |
+
+## Special weapons
+
+| Weapon | Keys | Effect |
+|--------|------|--------|
+| Rockets | E (Q to switch) | Straight shot, explodes on impact |
+| Heat seekers | E | Locks on to the nearest rival and chases it |
+| Flamethrower | hold E | Short cone of fire, sets cars and people alight |
+| Burning oil drums | E | Dropped behind you, explodes into a lake of fire |
+
+Buy them in the garage or grab the purple star crates on the track.
 
 ## Credits
 
