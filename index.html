@@ -486,6 +486,7 @@ tr.me td{color:var(--haz);font-weight:700}
 
   function hurt(c, amt, by) {
     if (c.dead || c.finished && !c.isPlayer && state === 'ending') return;
+    if (by && !by.isPlayer && !c.isPlayer) amt *= 0.4; // rivals mostly gang up on you, not each other
     c.hp -= amt * (1 - c.armor * 0.12) * c.tough; c.flash = 0.08;
     if (by && by !== c) { c.lastHit = by; c.lastHitT = raceT; }
     if (c.hp <= 0) wreck(c);
