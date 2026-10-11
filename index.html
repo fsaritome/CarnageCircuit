@@ -394,11 +394,12 @@ tr.me td{color:var(--haz);font-weight:700}
   let state = 'title', track = null, decal = null, dctx = null;
   let cars = [], player = null, bullets = [], mines = [], peds = [], pickups = [], parts = [], floats = [], msgs = [];
   let countT = 0, lastBeep = 9, raceT = 0, endT = 0, finishOrder = [], shake = 0, pedT = 0;
-  let rockets = [], drums = [], fires = [], protests = [], protestDone = false, glueMsgT = -9;
+  let rockets = [], drums = [], fires = [], gangs = [], bikers = [], bikes = [], debris = [], gangDone = false;
   const cam = { x: 0, y: 0 };
   // Test hook, dev preview only
-  if (CHANNEL) window.__cc = { get state() { return state; }, get cars() { return cars; }, get raceT() { return raceT; }, get protests() { return protests; }, get player() { return player; } };
-  const resetWeapons = () => { rockets = []; drums = []; fires = []; protests = []; protestDone = false; glueMsgT = -9; };
+  if (CHANNEL) window.__cc = { get state() { return state; }, get cars() { return cars; }, get raceT() { return raceT; }, get gangs() { return gangs; },
+    get bikers() { return bikers; }, get bikes() { return bikes; }, get debris() { return debris; }, get player() { return player; }, explode: (x, y) => explode(x, y, null) };
+  const resetWeapons = () => { rockets = []; drums = []; fires = []; gangs = []; bikers = []; bikes = []; debris = []; gangDone = false; };
 
   function nearest(x, y, i0, w) {
     const N = track.N, P = track.pts; let best = i0, bd = Infinity;
@@ -510,6 +511,7 @@ tr.me td{color:var(--haz);font-weight:700}
     for (const c of cars) { const d = hyp(c.x - x, c.y - y); if (d < R && !c.dead) { hurt(c, 34 * power * (1 - d / (R * 1.25)), by); const k = 260 * (1 - d / R); c.vx += (c.x - x) / (d || 1) * k; c.vy += (c.y - y) / (d || 1) * k; } }
     for (let i = peds.length - 1; i >= 0; i--) if (hyp(peds[i].x - x, peds[i].y - y) < 70 * power) killPed(i, rand(0, 6.28), null);
     for (let i = drums.length - 1; i >= 0; i--) if (hyp(drums[i].x - x, drums[i].y - y) < 50) { const d = drums.splice(i, 1)[0]; drumBoom(d); }
+    blast(x, y, R, by);
   }
   function ignite(c, by, t) {
     if (c.dead) return;
@@ -557,6 +559,14 @@ tr.me td{color:var(--haz);font-weight:700}
         const dx = peds[i].x - c.x, dy = peds[i].y - c.y;
         if (hyp(dx, dy) < 150 && Math.abs(wrap(Math.atan2(dy, dx) - c.a)) < 0.45) burnPed(i, c);
       }
+      for (const b of bikers) {
+        const dx = b.x - c.x, dy = b.y - c.y;
+        if (hyp(dx, dy) < 150 && Math.abs(wrap(Math.atan2(dy, dx) - c.a)) < 0.45) igniteBiker(b, c);
+      }
+      for (const m of bikes) {
+        const dx = m.x - c.x, dy = m.y - c.y;
+        if (!m.wrecked && m.fuse < 0 && hyp(dx, dy) < 140 && Math.abs(wrap(Math.atan2(dy, dx) - c.a)) < 0.4) { m.fuse = rand(0.8, 1.6); m.by = c; }
+      }
       if (c.flameSnd <= 0) { sfx.flame(c.isPlayer ? 1 : near(c.x, c.y)); c.flameSnd = 0.12; }
       return;
     }
@@ -575,22 +585,168 @@ tr.me td{color:var(--haz);font-weight:700}
     if (c.isPlayer && c.sp[type] <= 0) cycleSpecial(c);
   }
 
-  // Final-lap sit-in: activists glue themselves across most of the track, leaving one lane open
-  function spawnProtests() {
-    protestDone = true;
+  // ---------- Final lap: the Iron Vultures park their bikes across the track ----------
+  const SKINS = ['#f0c8a0', '#c58c5c', '#8a5a3a', '#e8b890'];
+  function makeBiker(x, y, a, idx) {
+    return { x, y, a, idx, vx: 0, vy: 0, z: 0, vz: 0, spin: 0, st: 'alive', burnT: 0, ph: rand(0, 6), pooled: false, charred: false,
+      jacket: pick(['#141414', '#2a1d14', '#3a2a1a', '#1a1a24']), head: pick(['bald', 'bandana', 'helmet']), skin: pick(SKINS), bat: Math.random() < 0.5 };
+  }
+  function spawnGang() {
+    gangDone = true;
     const N = track.N;
     for (const f of [0.38, 0.72]) {
       let idx = Math.floor(f * N);
       for (let t = 0; t < 6 && cars.some(c => !c.dead && hyp(c.x - track.pts[idx].x, c.y - track.pts[idx].y) < 380); t++) idx = (idx + 40) % N;
-      const p = track.pts[idx], s = Math.random() < 0.5 ? -1 : 1, members = [];
-      for (let lat = WALL - 12; lat >= -HALF + 56; lat -= 15) {
-        members.push({ x: p.x + p.nx * lat * s, y: p.y + p.ny * lat * s, vest: pick(['#ff8a1f', '#ffd21f', '#ff6a1f']),
-          skin: pick(['#f0c8a0', '#c58c5c', '#8a5a3a']), hair: pick(['#2a1a10', '#6a4a2a', '#c9a060', '#1a1a1a', '#b03a2a']), wob: rand(0, 6) });
+      const p = track.pts[idx], s = Math.random() < 0.5 ? -1 : 1;
+      gangs.push({ idx, p, s, gap: -s * (HALF - 26) });
+      for (let lat = WALL - 16; lat >= -HALF + 52; lat -= 24) {
+        const x = p.x + p.nx * lat * s, y = p.y + p.ny * lat * s;
+        bikes.push({ x, y, idx, vx: 0, vy: 0, z: 0, vz: 0, a: p.a + Math.PI / 2 + rand(-0.35, 0.35), spin: 0, hp: 6, fuse: -1, wrecked: false, by: null,
+          color: pick(['#1d1e22', '#7a1a14', '#23305a', '#c9a23a', '#4a4a4a', '#5a1a5a']) });
+        const n = Math.random() < 0.5 ? 2 : 1;
+        for (let j = 0; j < n; j++) {
+          const up = rand(15, 30), side = rand(-10, 10);
+          bikers.push(makeBiker(x - Math.cos(p.a) * up + p.nx * side, y - Math.sin(p.a) * up + p.ny * side, p.a + Math.PI + rand(-0.6, 0.6), idx));
+        }
       }
-      protests.push({ idx, p, s, gap: -s * (HALF - 26), members });
     }
-    msg('PROTEST ON THE TRACK!', '#ff8a1f');
-    msg('ACTIVISTS GLUED TO THE ROAD', INK);
+    msg('BIKER GANG ON THE TRACK!', '#ff8a1f');
+    msg('THE IRON VULTURES WANT A TOLL', INK);
+  }
+
+  // shared physics for flying bodies, limbs and bikes: gravity, bounce, slide, spin, walls
+  function phys(o, dt, fric, bleed) {
+    if (o.z > 0 || o.vz > 0) {
+      o.vz -= 900 * dt; o.z += o.vz * dt;
+      if (o.z <= 0) {
+        o.z = 0;
+        if (o.vz < -160) { o.vz = -o.vz * 0.3; if (bleed) bloodSplat(o.x, o.y, rand(0, 6.28), 12); else { burst(o.x, o.y, 5, 'spark'); sfx.crash(near(o.x, o.y) * 0.4); } }
+        else o.vz = 0;
+      }
+    }
+    const ground = o.z <= 0.5;
+    if (ground) { const f = Math.pow(fric, dt); o.vx *= f; o.vy *= f; o.spin *= Math.pow(0.12, dt); }
+    o.x += o.vx * dt; o.y += o.vy * dt; o.a += o.spin * dt;
+    const sp = hyp(o.vx, o.vy);
+    if (bleed && ground && sp > 25) { dctx.fillStyle = `rgba(125,8,6,${clamp(sp / 350, 0.2, 0.7)})`; dctx.fillRect(o.x - 2.5, o.y - 2.5, 5, 5); }
+    if (bleed && ground && sp < 6 && !o.pooled) { o.pooled = true; dctx.fillStyle = 'rgba(105,6,4,.75)'; dctx.beginPath(); dctx.ellipse(o.x, o.y, rand(9, 15), rand(6, 10), rand(0, 3), 0, 7); dctx.fill(); }
+    if (sp > 60) o.pooled = false;
+    o.idx = nearest(o.x, o.y, o.idx, 14);
+    const q = track.pts[o.idx], dx = o.x - q.x, dy = o.y - q.y, d = hyp(dx, dy);
+    if (d > WALL - 6) {
+      const nx = dx / d, ny = dy / d, vn = o.vx * nx + o.vy * ny;
+      o.x = q.x + nx * (WALL - 6); o.y = q.y + ny * (WALL - 6);
+      if (vn > 0) { o.vx -= 1.4 * vn * nx; o.vy -= 1.4 * vn * ny; if (bleed && vn > 120) bloodSplat(o.x, o.y, Math.atan2(ny, nx), 14); }
+    }
+  }
+
+  function killBiker(b, by, how, dir = rand(0, 6.28)) {
+    if (b.st === 'dead' || b.st === 'gone') return;
+    b.st = 'dead'; b.burnT = 0;
+    if (how === 'char') { b.charred = true; burst(b.x, b.y, 10, 'fire'); burst(b.x, b.y, 6, 'smoke'); }
+    else { bloodSplat(b.x, b.y, dir, 26); burst(b.x, b.y, 18, 'gib'); }
+    sfx.scream(near(b.x, b.y));
+    if (by && by.isPlayer) {
+      career.cash += 50;
+      floats.push({ x: b.x, y: b.y - 14, text: how === 'char' ? pick(['BIKER BBQ', 'CHARGRILLED']) : how === 'blast' ? pick(['AIRMAIL', 'SPLATTERED', 'LIFTOFF']) : pick(['ROADKILL', 'HOOD ORNAMENT', 'TOLL PAID', 'SPEED BUMP']), life: 1.1, color: BLOOD });
+    }
+  }
+  // blown to pieces: the body is replaced by flying limbs, a head and a lot of red
+  function gibBiker(b, nx, ny, k) {
+    b.st = 'gone';
+    bloodSplat(b.x, b.y, Math.atan2(ny, nx), 30); burst(b.x, b.y, 34, 'gib');
+    for (const part of ['head', 'arm', 'arm', 'leg', 'leg', 'torso']) {
+      const a = Math.atan2(ny, nx) + rand(-1.1, 1.1), s = rand(250, 650) * k;
+      debris.push({ kind: part, x: b.x, y: b.y, idx: b.idx, vx: Math.cos(a) * s, vy: Math.sin(a) * s, z: 4, vz: rand(250, 560) * k, a: rand(0, 6.28), spin: rand(-22, 22),
+        color: part === 'head' ? b.skin : part === 'leg' ? '#2a3346' : b.jacket, pooled: false });
+    }
+  }
+  // shockwave from any explosion: kills, launches and shreds bikers, throws bikes and sets them off
+  function blast(x, y, R, by) {
+    for (const b of bikers) {
+      if (b.st === 'gone') continue;
+      const d = hyp(b.x - x, b.y - y);
+      if (d > R * 1.4) continue;
+      const k = 1 - d / (R * 1.4), nx = (b.x - x) / (d || 1), ny = (b.y - y) / (d || 1);
+      if (b.st !== 'dead') killBiker(b, by, 'blast', Math.atan2(ny, nx));
+      if (d < R * 0.55 && Math.random() < 0.7) { gibBiker(b, nx, ny, 0.6 + k); continue; }
+      b.vx += nx * 720 * k + rand(-60, 60); b.vy += ny * 720 * k + rand(-60, 60); b.vz += 260 + 480 * k; b.spin = rand(-24, 24);
+    }
+    for (const o of debris) {
+      const d = hyp(o.x - x, o.y - y); if (d > R * 1.4) continue;
+      const k = 1 - d / (R * 1.4); o.vx += (o.x - x) / (d || 1) * 600 * k; o.vy += (o.y - y) / (d || 1) * 600 * k; o.vz += 300 * k; o.spin = rand(-25, 25);
+    }
+    for (const m of bikes) {
+      const d = hyp(m.x - x, m.y - y); if (d > R * 1.4) continue;
+      const k = 1 - d / (R * 1.4), nx = (m.x - x) / (d || 1), ny = (m.y - y) / (d || 1);
+      m.vx += nx * 520 * k + rand(-40, 40); m.vy += ny * 520 * k + rand(-40, 40); m.vz += 200 + 340 * k; m.spin = rand(-16, 16);
+      if (!m.wrecked && m.fuse < 0 && d < R) { m.fuse = rand(0.25, 0.8); m.by = by; }
+    }
+  }
+  function igniteBiker(b, by) {
+    if (b.st !== 'alive') return;
+    b.st = 'burning'; b.burnT = rand(1.8, 3); b.by = by; b.a = rand(0, 6.28);
+    sfx.scream(near(b.x, b.y));
+  }
+
+  function updateGang(dt) {
+    for (const b of bikers) {
+      if (b.st === 'alive') {
+        b.ph += dt;
+        for (const c of cars) {
+          const sp = hyp(c.vx, c.vy);
+          if (c.dead || sp < 40 || hyp(c.x - b.x, c.y - b.y) > 16) continue;
+          // run over: big splatter, the body flies off the bonnet, and it costs you a lot of speed
+          killBiker(b, c, 'splat', Math.atan2(c.vy, c.vx));
+          b.vx = c.vx * 0.95 + rand(-50, 50); b.vy = c.vy * 0.95 + rand(-50, 50); b.vz = 110 + sp * 0.55; b.spin = rand(-14, 14);
+          c.vx *= 0.6; c.vy *= 0.6; c.bloodT = 3; hurt(c, 2, null);
+          if (c.isPlayer) shake = Math.max(shake, 6);
+          break;
+        }
+      } else if (b.st === 'burning') {
+        b.burnT -= dt; b.ph += dt * 3;
+        b.a += rand(-6, 6) * dt;
+        b.x += Math.cos(b.a) * 75 * dt; b.y += Math.sin(b.a) * 75 * dt;
+        b.idx = nearest(b.x, b.y, b.idx, 10);
+        const q = track.pts[b.idx]; if (hyp(b.x - q.x, b.y - q.y) > WALL - 8) b.a += Math.PI;
+        if (Math.random() < 0.8) parts.push({ x: b.x + rand(-4, 4), y: b.y + rand(-4, 4), vx: rand(-10, 10), vy: rand(-40, -15), life: 0.35, max: 0.35, kind: 'fire', size: rand(3, 6) });
+        if (b.burnT <= 0) killBiker(b, b.by, 'char');
+        for (const c of cars) if (!c.dead && hyp(c.vx, c.vy) > 40 && hyp(c.x - b.x, c.y - b.y) < 16) { killBiker(b, c, 'splat', Math.atan2(c.vy, c.vx)); b.vx = c.vx * 0.9; b.vy = c.vy * 0.9; b.vz = 200; c.vx *= 0.7; c.vy *= 0.7; c.bloodT = 3; }
+      } else if (b.st === 'dead') {
+        phys(b, dt, 0.08, !b.charred);
+        // driving through a body kicks it along and drags you down
+        if (b.z < 6) for (const c of cars) {
+          if (c.dead || hyp(c.x - b.x, c.y - b.y) > 15) continue;
+          const sp = hyp(c.vx, c.vy); if (sp < 30) continue;
+          b.vx = c.vx * 0.7 + rand(-30, 30); b.vy = c.vy * 0.7 + rand(-30, 30); b.vz = Math.max(b.vz, sp > 160 ? 90 : 20); b.spin = rand(-8, 8);
+          c.vx *= 0.88; c.vy *= 0.88; c.bloodT = 3;
+        }
+      }
+    }
+    for (let i = debris.length - 1; i >= 0; i--) phys(debris[i], dt, 0.1, true);
+    if (debris.length > 160) debris.splice(0, debris.length - 160);
+    for (const m of bikes) {
+      phys(m, dt, 0.25, false);
+      if (m.fuse >= 0) {
+        m.fuse -= dt;
+        if (Math.random() < 0.7) parts.push({ x: m.x + rand(-6, 6), y: m.y + rand(-6, 6), vx: 0, vy: rand(-30, -10), life: 0.3, max: 0.3, kind: 'fire', size: rand(3, 6) });
+        if (m.fuse < 0) { m.wrecked = true; m.fuse = -1; explode(m.x, m.y, m.by, 0.75); }
+      }
+      // a parked bike is heavy but movable: it gets shoved and the car loses speed
+      for (const c of cars) {
+        if (c.dead || m.z > 10) continue;
+        const dx = m.x - c.x, dy = m.y - c.y, d = hyp(dx, dy);
+        if (d >= 24 || d === 0) continue;
+        const nx = dx / d, ny = dy / d, ov = 24 - d;
+        m.x += nx * ov * 0.8; m.y += ny * ov * 0.8; c.x -= nx * ov * 0.2; c.y -= ny * ov * 0.2;
+        const rel = (c.vx - m.vx) * nx + (c.vy - m.vy) * ny;
+        if (rel > 0) {
+          m.vx += nx * rel * 1.25; m.vy += ny * rel * 1.25; m.spin += rand(-8, 8) * rel / 200; if (rel > 180) m.vz = rel * 0.35;
+          c.vx -= nx * rel * 0.4; c.vy -= ny * rel * 0.4;
+          if (rel > 100) { hurt(c, (rel - 100) * 0.025, null); sfx.crash(near(c.x, c.y) * 0.6); burst(m.x, m.y, 6, 'spark'); }
+        }
+      }
+    }
   }
   function killPed(i, dir, car) {
     const p = peds[i];
@@ -629,7 +785,7 @@ tr.me td{color:var(--haz);font-weight:700}
     if (D.line && Math.abs(turn) > 0.25) lane = Math.sign(turn) * 34;
     const hazards = [...mines.filter(m => m.owner !== c), ...drums, ...fires];
     for (const m of hazards) if (hyp(m.x - p.x, m.y - p.y) < (m.r || 0) + 70) { const ml = (m.x - p.x) * p.nx + (m.y - p.y) * p.ny; lane = ml > 0 ? ml - 46 - (m.r || 0) : ml + 46 + (m.r || 0); }
-    for (const pr of protests) { const ahead = (pr.idx - c.idx + N) % N; if (ahead < look * 2 + 34) lane = pr.gap; }
+    for (const g of gangs) { const ahead = (g.idx - c.idx + N) % N; if (ahead < look * 2 + 34) lane = g.gap; }
     lane = clamp(lane, -HALF + 12, HALF - 12);
     const tx = p.x + p.nx * lane, ty = p.y + p.ny * lane;
     const diff = wrap(Math.atan2(ty - c.y, tx - c.x) - c.a);
@@ -723,7 +879,7 @@ tr.me td{color:var(--haz);font-weight:700}
   function onLap(c) {
     c.lap++;
     if (c.lap >= 1) c.lapTimes.push(raceT);
-    if (c.lap === LAPS - 1 && !protestDone && !c.dead) spawnProtests();
+    if (c.lap === LAPS - 1 && !gangDone && !c.dead) spawnGang();
     if (c.lap >= LAPS && !c.finished && !c.dead) {
       c.finished = true; finishOrder.push(c);
       if (c.isPlayer) { const pos = finishOrder.length; msg(pos === 1 ? 'YOU WIN!' : `FINISHED ${ordinal(pos)}`, HAZ); sfx.lap(); }
@@ -808,6 +964,18 @@ tr.me td{color:var(--haz);font-weight:700}
         hurt(c, b.dmg, b.owner); burst(b.x, b.y, 3, 'spark'); if (c.isPlayer || b.owner.isPlayer) sfx.ping(0.8); gone = true; break;
       }
       if (!gone) for (let k = peds.length - 1; k >= 0; k--) if (hyp(peds[k].x - b.x, peds[k].y - b.y) < 9) { killPed(k, Math.atan2(b.vy, b.vx), null); gone = true; break; }
+      if (!gone) for (const bk of bikers) {
+        if (bk.st === 'gone' || bk.z > 12 || hyp(bk.x - b.x, bk.y - b.y) > 9) continue;
+        const dir = Math.atan2(b.vy, b.vx);
+        if (bk.st === 'dead') { bk.vx += Math.cos(dir) * 60; bk.vy += Math.sin(dir) * 60; bloodSplat(bk.x, bk.y, dir, 4); }
+        else killBiker(bk, b.owner, 'splat', dir);
+        gone = true; break;
+      }
+      if (!gone) for (const m of bikes) {
+        if (m.wrecked || m.z > 12 || hyp(m.x - b.x, m.y - b.y) > 12) continue;
+        burst(b.x, b.y, 3, 'spark'); if (--m.hp <= 0 && m.fuse < 0) { m.fuse = 0.4; m.by = b.owner; }
+        gone = true; break;
+      }
       if (!gone) for (let k = drums.length - 1; k >= 0; k--) if (hyp(drums[k].x - b.x, drums[k].y - b.y) < 11) { const d = drums.splice(k, 1)[0]; d.owner = b.owner; drumBoom(d); gone = true; break; }
       if (gone) bullets.splice(i, 1);
     }
@@ -836,7 +1004,8 @@ tr.me td{color:var(--haz);font-weight:700}
       let boom = r.life <= 0 || hyp(r.x - p.x, r.y - p.y) > WALL;
       if (!boom) for (const o of cars) if (o !== r.owner && !o.dead && hyp(o.x - r.x, o.y - r.y) < 18) { hurt(o, 18, r.owner); boom = true; break; }
       if (!boom) for (const pd of peds) if (hyp(pd.x - r.x, pd.y - r.y) < 10) { boom = true; break; }
-      if (!boom) for (const pr of protests) for (const m of pr.members) if (hyp(m.x - r.x, m.y - r.y) < 10) { boom = true; break; }
+      if (!boom) for (const b of bikers) if ((b.st === 'alive' || b.st === 'burning') && hyp(b.x - r.x, b.y - r.y) < 12) { boom = true; break; }
+      if (!boom) for (const m of bikes) if (m.z < 10 && hyp(m.x - r.x, m.y - r.y) < 14) { boom = true; break; }
       if (boom) { rockets.splice(i, 1); explode(r.x, r.y, r.owner, r.kind === 'seeker' ? 0.9 : 1); }
     }
 
@@ -859,22 +1028,12 @@ tr.me td{color:var(--haz);font-weight:700}
       for (let k = peds.length - 1; k >= 0; k--) if (hyp(peds[k].x - f.x, peds[k].y - f.y) < f.r) burnPed(k, f.owner);
     }
 
-    // glued protesters: an immovable wall of people
-    for (const pr of protests) for (const m of pr.members) for (const c of cars) {
-      if (c.dead) continue;
-      const dx = c.x - m.x, dy = c.y - m.y, d = hyp(dx, dy);
-      if (d >= 22 || d === 0) continue;
-      const nx = dx / d, ny = dy / d;
-      c.x = m.x + nx * 22; c.y = m.y + ny * 22;
-      const vn = c.vx * nx + c.vy * ny;
-      if (vn < 0) {
-        c.vx -= 1.6 * vn * nx; c.vy -= 1.6 * vn * ny;
-        if (-vn > 80) {
-          hurt(c, (-vn - 80) * 0.04, null); sfx.crash(near(c.x, c.y) * 0.6);
-          if (c.isPlayer) { shake = Math.max(shake, -vn / 80); if (raceT - glueMsgT > 3) { glueMsgT = raceT; floats.push({ x: m.x, y: m.y - 16, text: pick(['SUPERGLUE!', "THEY WON'T BUDGE", 'GLUED SOLID', 'BLOCKADE!']), life: 1.2, color: '#ff8a1f' }); } }
-        }
-      }
+    // fire spreads to the gang
+    for (const f of fires) {
+      for (const b of bikers) if (hyp(b.x - f.x, b.y - f.y) < f.r) igniteBiker(b, f.owner);
+      for (const m of bikes) if (!m.wrecked && m.fuse < 0 && hyp(m.x - f.x, m.y - f.y) < f.r * 0.8) { m.fuse = rand(1, 2.5); m.by = f.owner; }
     }
+    updateGang(dt);
 
     // mines
     for (let i = mines.length - 1; i >= 0; i--) {
@@ -1018,17 +1177,57 @@ tr.me td{color:var(--haz);font-weight:700}
     ctx.fillStyle = d.fuse < 1.5 && Math.floor(d.fuse * 8) % 2 ? '#fff' : '#ffb21f'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, 7); ctx.fill();
     ctx.restore();
   }
-  function drawProtester(m, a) {
-    ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(a + Math.PI);
-    const w = Math.sin(raceT * 3 + m.wob) * 1.2;
-    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.arc(1.5, 2, 8, 0, 7); ctx.fill();
-    ctx.fillStyle = '#2a3346'; ctx.fillRect(1, -4, 9, 3); ctx.fillRect(1, 1, 9, 3);
-    ctx.fillStyle = '#cfd2d6'; ctx.beginPath(); ctx.arc(3, -9 + w, 2.6, 0, 7); ctx.arc(3, 9 - w, 2.6, 0, 7); ctx.fill();
-    ctx.fillStyle = m.skin; ctx.fillRect(-1, -9 + w, 4, 2); ctx.fillRect(-1, 7 - w, 4, 2);
-    ctx.fillStyle = m.vest; ctx.beginPath(); ctx.ellipse(-1, 0, 5, 6.5, 0, 0, 7); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillRect(-2, -6, 1.5, 12);
-    ctx.fillStyle = m.hair; ctx.beginPath(); ctx.arc(-2, 0, 3.6, 0, 7); ctx.fill();
-    ctx.fillStyle = m.skin; ctx.beginPath(); ctx.arc(-1, 0, 2.2, 0, 7); ctx.fill();
+  // airborne things: shadow stays on the ground, the object rises and grows a little
+  function lift(o) {
+    ctx.fillStyle = `rgba(0,0,0,${clamp(0.35 - o.z / 600, 0.08, 0.35)})`;
+    ctx.beginPath(); ctx.ellipse(o.x + 2, o.y + 3, 8, 6, 0, 0, 7); ctx.fill();
+    ctx.save(); ctx.translate(o.x, o.y - o.z * 0.6); const s = 1 + o.z / 260; ctx.scale(s, s); ctx.rotate(o.a);
+  }
+  function drawBike(m) {
+    lift(m);
+    ctx.fillStyle = '#0d0d0d'; ctx.fillRect(-13, -2.5, 7, 5); ctx.fillRect(6, -2.5, 7, 5);
+    ctx.fillStyle = m.wrecked ? '#231d1a' : m.fuse >= 0 && Math.floor(m.fuse * 10) % 2 ? '#fff' : m.color;
+    ctx.beginPath(); ctx.roundRect(-8, -3.5, 15, 7, 2); ctx.fill();
+    if (!m.wrecked) {
+      ctx.fillStyle = '#1a1a1a'; ctx.fillRect(-6, -2.5, 6, 5);
+      ctx.strokeStyle = '#c9ccd1'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(7, -7); ctx.lineTo(9, 0); ctx.lineTo(7, 7); ctx.stroke();
+      ctx.fillStyle = '#9aa0a8'; ctx.fillRect(-11, 3, 6, 1.6);
+    }
+    ctx.restore();
+  }
+  function headOf(b) {
+    if (b.head === 'helmet') { ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(0, 0, 4, 0, 7); ctx.fill(); ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(-1, -3, 2, 2); }
+    else { ctx.fillStyle = b.skin; ctx.beginPath(); ctx.arc(0, 0, 3.6, 0, 7); ctx.fill(); if (b.head === 'bandana') { ctx.fillStyle = '#b3201f'; ctx.beginPath(); ctx.arc(-0.8, 0, 3.6, Math.PI * 0.5, Math.PI * 1.5); ctx.fill(); } }
+  }
+  function drawBiker(b) {
+    if (b.st === 'gone') return;
+    if (b.st === 'dead') {
+      lift(b);
+      const c = b.charred ? '#17110d' : b.jacket;
+      ctx.strokeStyle = b.charred ? '#17110d' : '#2a3346'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-4, -2); ctx.lineTo(-12, -6); ctx.moveTo(-4, 2); ctx.lineTo(-11, 7); ctx.stroke();
+      ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(3, -3); ctx.lineTo(7, -10); ctx.moveTo(3, 3); ctx.lineTo(9, 7); ctx.stroke();
+      ctx.fillStyle = c; ctx.beginPath(); ctx.ellipse(0, 0, 6.5, 5, 0, 0, 7); ctx.fill();
+      if (!b.charred) { ctx.fillStyle = 'rgba(150,10,8,.85)'; ctx.beginPath(); ctx.arc(rand(-2, 2), rand(-2, 2), 3, 0, 7); ctx.fill(); }
+      ctx.translate(9, 0); if (b.charred) { ctx.fillStyle = '#17110d'; ctx.beginPath(); ctx.arc(0, 0, 3.6, 0, 7); ctx.fill(); } else headOf(b);
+      ctx.restore();
+      return;
+    }
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a);
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.arc(2, 2, 7, 0, 7); ctx.fill();
+    const sway = b.st === 'burning' ? Math.sin(b.ph * 8) * 4 : Math.sin(b.ph * 1.5) * 0.8;
+    ctx.fillStyle = b.skin; ctx.fillRect(1, -8 - sway, 5, 2.5); ctx.fillRect(1, 5.5 + sway, 5, 2.5);
+    if (b.bat && b.st === 'alive') { ctx.strokeStyle = '#7a5a34'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(5, 7); ctx.lineTo(14, 3); ctx.stroke(); }
+    ctx.fillStyle = b.jacket; ctx.beginPath(); ctx.ellipse(0, 0, 5, 7.5, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#c9ccd1'; ctx.beginPath(); ctx.arc(-3, 0, 1.6, 0, 7); ctx.fill();
+    headOf(b);
+    ctx.restore();
+  }
+  function drawDebris(o) {
+    lift(o);
+    if (o.kind === 'head') { ctx.fillStyle = o.color; ctx.beginPath(); ctx.arc(0, 0, 3.6, 0, 7); ctx.fill(); ctx.fillStyle = '#8a0c0a'; ctx.beginPath(); ctx.arc(2.5, 0, 2, 0, 7); ctx.fill(); }
+    else if (o.kind === 'torso') { ctx.fillStyle = o.color; ctx.beginPath(); ctx.ellipse(0, 0, 6, 4.5, 0, 0, 7); ctx.fill(); ctx.fillStyle = '#8a0c0a'; ctx.beginPath(); ctx.arc(4, 0, 3, 0, 7); ctx.fill(); }
+    else { ctx.fillStyle = o.color; ctx.fillRect(-5, -1.6, 8, 3.2); ctx.fillStyle = '#8a0c0a'; ctx.fillRect(3, -1.8, 3, 3.6); }
     ctx.restore();
   }
 
@@ -1057,22 +1256,16 @@ tr.me td{color:var(--haz);font-weight:700}
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 7); ctx.fill();
     }
     for (const d of drums) if (inView(d.x, d.y)) drawDrum(d);
-    for (const pr of protests) {
-      if (!inView(pr.p.x, pr.p.y, 220)) continue;
-      const a = pr.members[0], b = pr.members[pr.members.length - 1], len = hyp(a.x - b.x, a.y - b.y) + 18;
-      const back = -16, mx = (a.x + b.x) / 2 + Math.cos(pr.p.a) * back, my = (a.y + b.y) / 2 + Math.sin(pr.p.a) * back;
-      ctx.save(); ctx.translate(mx, my); ctx.rotate(pr.p.a + Math.PI / 2 * pr.s);
-      ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(-len / 2 + 3, -6, len, 15);
-      ctx.fillStyle = '#f4f1e8'; ctx.fillRect(-len / 2, -9, len, 15);
-      ctx.fillStyle = '#e0601a'; ctx.fillRect(-len / 2, -9, len, 3); ctx.fillRect(-len / 2, 3, len, 3);
-      ctx.fillStyle = '#1d1e22'; ctx.font = '700 9px "Chakra Petch", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('LETZTE RUNDE · KLIMA JETZT', 0, -1.5, len - 8);
-      ctx.restore();
-      for (const m of pr.members) drawProtester(m, pr.p.a);
-    }
+    // ground level first, then cars, then anything flying through the air on top
+    for (const m of bikes) if (m.z <= 10 && inView(m.x, m.y)) drawBike(m);
+    for (const b of bikers) if (b.z <= 10 && inView(b.x, b.y)) drawBiker(b);
+    for (const o of debris) if (o.z <= 10 && inView(o.x, o.y)) drawDebris(o);
     for (const p of peds) if (inView(p.x, p.y)) drawPed(p);
     for (const c of cars) if (c.dead && inView(c.x, c.y)) drawCar(c);
     for (const c of cars) if (!c.dead && inView(c.x, c.y)) drawCar(c);
+    for (const m of bikes) if (m.z > 10 && inView(m.x, m.y, 120)) drawBike(m);
+    for (const b of bikers) if (b.z > 10 && inView(b.x, b.y, 120)) drawBiker(b);
+    for (const o of debris) if (o.z > 10 && inView(o.x, o.y, 120)) drawDebris(o);
     for (const r of rockets) if (inView(r.x, r.y)) drawRocket(r);
     ctx.strokeStyle = '#ffe36b'; ctx.lineWidth = 2;
     for (const b of bullets) { ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x - b.vx * 0.012, b.y - b.vy * 0.012); ctx.stroke(); }
@@ -1146,7 +1339,7 @@ tr.me td{color:var(--haz);font-weight:700}
     ctx.strokeStyle = 'rgba(236,230,216,.6)'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
     ctx.beginPath(); for (let i = 0; i < track.N; i += 4) { const p = track.pts[i]; ctx.lineTo(mx + (p.x - mm2.ox) * mm2.s, my + (p.y - mm2.oy) * mm2.s); } ctx.closePath(); ctx.stroke();
     const s0 = track.pts[0]; ctx.fillStyle = '#fff'; ctx.fillRect(mx + (s0.x - mm2.ox) * mm2.s - 2, my + (s0.y - mm2.oy) * mm2.s - 5, 4, 10);
-    for (const pr of protests) { ctx.fillStyle = '#ff8a1f'; ctx.fillRect(mx + (pr.p.x - mm2.ox) * mm2.s - 4, my + (pr.p.y - mm2.oy) * mm2.s - 4, 8, 8); }
+    for (const g of gangs) { ctx.fillStyle = BLOOD; ctx.fillRect(mx + (g.p.x - mm2.ox) * mm2.s - 4, my + (g.p.y - mm2.oy) * mm2.s - 4, 8, 8); }
     for (const c of cars) {
       ctx.fillStyle = c.dead ? '#555' : c.isPlayer ? HAZ : c.color === '#1d1e22' ? c.accent : c.color;
       ctx.beginPath(); ctx.arc(mx + (c.x - mm2.ox) * mm2.s, my + (c.y - mm2.oy) * mm2.s, c.isPlayer ? 4.5 : 3.5, 0, 7); ctx.fill();
