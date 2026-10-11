@@ -363,11 +363,11 @@ tr.me td{color:var(--haz);font-weight:700}
   // grip: extra tyre grip, line: take the inside of corners, sp: special-weapon stock per race,
   // focus: how much they prefer shooting at you over each other
   const DIFF = {
-    easy:   { label: 'Easy',   spd: 0.97, corner: 1.04, aim: 0.14, range: 460, lead: 0.5, fire: 1.0,  up: 0, tough: 0.55, mine: 1.0, rb: [0.96, 1.07], grip: 0,   line: false, sp: 0, focus: 0 },
-    normal: { label: 'Normal', spd: 1.02, corner: 1.1,  aim: 0.19, range: 540, lead: 1,   fire: 0.85, up: 1, tough: 0.42, mine: 0.7, rb: [0.99, 1.1],  grip: 0.3, line: true,  sp: 1, focus: 0.15 },
-    hard:   { label: 'Hard',   spd: 1.07, corner: 1.18, aim: 0.25, range: 620, lead: 1,   fire: 0.7,  up: 2, tough: 0.32, mine: 0.5, rb: [1.0, 1.14],  grip: 0.6, line: true,  sp: 1, focus: 0.3 },
-    brutal: { label: 'Brutal', spd: 1.14, corner: 1.3,  aim: 0.3,  range: 700, lead: 1,   fire: 0.55, up: 3, tough: 0.24, mine: 0.4, rb: [1.03, 1.2],  grip: 1.3, line: true,  sp: 2, focus: 0.6 },
-    insane: { label: 'Insane', spd: 1.22, corner: 1.42, aim: 0.36, range: 800, lead: 1,   fire: 0.45, up: 4, tough: 0.16, mine: 0.3, rb: [1.06, 1.28], grip: 2.1, line: true,  sp: 3, focus: 1 },
+    easy:   { label: 'Easy',   spd: 0.97, corner: 1.04, aim: 0.14, range: 460, lead: 0.5, fire: 1.0,  up: 0, tough: 0.55, mine: 1.0, rb: [0.96, 1.07], grip: 0,   line: false, sp: 0, focus: 0,    agg: 0.5,  infight: 0.1,  hunt: false },
+    normal: { label: 'Normal', spd: 1.02, corner: 1.1,  aim: 0.19, range: 540, lead: 1,   fire: 0.85, up: 1, tough: 0.42, mine: 0.7, rb: [0.99, 1.1],  grip: 0.3, line: true,  sp: 1, focus: 0.15, agg: 0.65, infight: 0.15, hunt: false },
+    hard:   { label: 'Hard',   spd: 1.07, corner: 1.18, aim: 0.25, range: 620, lead: 1,   fire: 0.7,  up: 2, tough: 0.32, mine: 0.5, rb: [1.0, 1.14],  grip: 0.6, line: true,  sp: 1, focus: 0.3,  agg: 0.8,  infight: 0.2,  hunt: false },
+    brutal: { label: 'Brutal', spd: 1.14, corner: 1.3,  aim: 0.3,  range: 700, lead: 1,   fire: 0.55, up: 3, tough: 0.24, mine: 0.4, rb: [1.03, 1.2],  grip: 1.3, line: true,  sp: 2, focus: 0.6,  agg: 0.95, infight: 0.25, hunt: false },
+    insane: { label: 'Insane', spd: 1.22, corner: 1.42, aim: 0.36, range: 800, lead: 1,   fire: 0.45, up: 4, tough: 0.16, mine: 0.3, rb: [1.06, 1.28], grip: 2.1, line: true,  sp: 3, focus: 1,    agg: 1.15, infight: 0.3,  hunt: true },
   };
   const SPECIALS = {
     rocket: { label: 'Rockets',           hud: 'ROCKETS',   pack: 4,   max: 12,  cost: 500, desc: 'Fire straight ahead, explode on impact' },
@@ -418,7 +418,7 @@ tr.me td{color:var(--haz);font-weight:700}
       turbo: 100, spd: cfg.spd, rb: 1, skill: cfg.skill || 1, tough: cfg.tough || 1, fireMul: cfg.fireMul || 1, grip: cfg.grip || 0,
       sp: Object.assign(noSpecials(), cfg.sp), spSel: 0, spCd: 0, flameT: 0, flameSnd: 0, burnT: 0, burnBy: null, lapTimes: [],
       fireCd: 0, mineCd: 0, sndCd: 0, muzzle: 0, flash: 0, bloodT: 0, offroad: false, lastHit: null, lastHitT: -99, kills: 0,
-      ai: { rev: 0, revSteer: 1, stuck: 0, lane: rand(-30, 30), laneT: rand(1, 4), mineCd: rand(3, 6), turboT: 0, spCd: rand(2, 4), boost: d.boost || 0 } };
+      ai: { rev: 0, revSteer: 1, stuck: 0, lane: rand(-30, 30), laneT: rand(1, 4), mineCd: rand(3, 6), turboT: 0, spCd: rand(4, 8), calm: rand(1, 3), burst: 0, rivalT: 0, rivalOk: false, boost: d.boost || 0 } };
   }
 
   function setupRace() {
@@ -508,7 +508,7 @@ tr.me td{color:var(--haz);font-weight:700}
     dctx.fillStyle = 'rgba(15,12,10,.5)'; dctx.beginPath(); dctx.arc(x, y, 24 * power, 0, 7); dctx.fill();
     sfx.boom(near(x, y) * 0.8); shake = Math.max(shake, 10 * power * near(x, y));
     const R = 80 * power;
-    for (const c of cars) { const d = hyp(c.x - x, c.y - y); if (d < R && !c.dead) { hurt(c, 34 * power * (1 - d / (R * 1.25)), by); const k = 260 * (1 - d / R); c.vx += (c.x - x) / (d || 1) * k; c.vy += (c.y - y) / (d || 1) * k; } }
+    for (const c of cars) { const d = hyp(c.x - x, c.y - y); if (d < R && !c.dead) { hurt(c, 20 * power * (1 - d / (R * 1.25)), by); const k = 260 * (1 - d / R); c.vx += (c.x - x) / (d || 1) * k; c.vy += (c.y - y) / (d || 1) * k; } }
     for (let i = peds.length - 1; i >= 0; i--) if (hyp(peds[i].x - x, peds[i].y - y) < 70 * power) killPed(i, rand(0, 6.28), null);
     for (let i = drums.length - 1; i >= 0; i--) if (hyp(drums[i].x - x, drums[i].y - y) < 50) { const d = drums.splice(i, 1)[0]; drumBoom(d); }
     blast(x, y, R, by);
@@ -553,7 +553,7 @@ tr.me td{color:var(--haz);font-weight:700}
       for (const o of cars) {
         if (o === c || o.dead) continue;
         const dx = o.x - c.x, dy = o.y - c.y;
-        if (hyp(dx, dy) < 150 && Math.abs(wrap(Math.atan2(dy, dx) - c.a)) < 0.4) { hurt(o, 26 * dt, c); ignite(o, c, 2.5); }
+        if (hyp(dx, dy) < 150 && Math.abs(wrap(Math.atan2(dy, dx) - c.a)) < 0.4) { hurt(o, 11 * dt, c); ignite(o, c, 2); }
       }
       for (let i = peds.length - 1; i >= 0; i--) {
         const dx = peds[i].x - c.x, dy = peds[i].y - c.y;
@@ -762,7 +762,7 @@ tr.me td{color:var(--haz);font-weight:700}
     if (c.fireCd > 0 || c.ammo <= 0) return;
     c.fireCd = (0.1 - c.gun * 0.016) * c.fireMul; c.ammo--; c.muzzle = 0.05;
     const a = c.a + rand(-0.035, 0.035), ca = Math.cos(c.a), sa = Math.sin(c.a);
-    bullets.push({ x: c.x + ca * 22, y: c.y + sa * 22, vx: c.vx + Math.cos(a) * 980, vy: c.vy + Math.sin(a) * 980, life: 0.55, owner: c, idx: c.idx, dmg: 2.2 + c.gun * 0.95 });
+    bullets.push({ x: c.x + ca * 22, y: c.y + sa * 22, vx: c.vx + Math.cos(a) * 980, vy: c.vy + Math.sin(a) * 980, life: 0.55, owner: c, idx: c.idx, dmg: 1.3 + c.gun * 0.6 });
     if (c.sndCd <= 0) { sfx.gun(c.isPlayer ? 1 : near(c.x, c.y) * 0.7); c.sndCd = 0.07; }
   }
   function dropMine(c) {
@@ -799,30 +799,34 @@ tr.me td{color:var(--haz);font-weight:700}
     if (curv < 0.22 && c.turbo > 25 && fwd > 220 && ai.turboT < -2 && Math.random() < 0.02 + ai.boost * 0.02) ai.turboT = rand(0.8, 1.6);
     ctl.turbo = ai.turboT > 0 && curv < 0.4;
     const ca = Math.cos(c.a), sa = Math.sin(c.a);
-    let hunt = null, huntA = 0.5, front = false, close = false, seek = false, behind = false;
-    ai.mineCd -= dt;
+    let hunt = null, huntA = 0.5, inSights = false, front = false, close = false, seek = false, behind = false;
+    ai.mineCd -= dt; ai.spCd -= dt; ai.calm -= dt; ai.burst -= dt; ai.rivalT -= dt;
+    // most of the time rivals leave each other alone and race; now and then one picks a fight
+    if (ai.rivalT < 0) { ai.rivalOk = Math.random() < D.infight; ai.rivalT = rand(3, 7); }
     for (const o of cars) {
-      if (o === c || o.dead) continue;
+      if (o === c || o.dead || !(o.isPlayer || ai.rivalOk)) continue;
       const dx = o.x - c.x, dy = o.y - c.y, d = hyp(dx, dy);
       // aim where the target will be when the bullets arrive
       const t = d / 980 * D.lead, ax = dx + o.vx * t, ay = dy + o.vy * t;
       const off = Math.abs(wrap(Math.atan2(ay, ax) - c.a));
       const want = off - (o.isPlayer ? D.focus * 0.2 : 0);
-      if (d < D.range && off < D.aim) ctl.fire = true;
-      if (D.lead >= 1 && d < D.range && want < huntA) { hunt = Math.atan2(ay, ax); huntA = want; }
+      if (d < D.range && off < D.aim) inSights = true;
+      if (D.hunt && d < D.range && want < huntA) { hunt = Math.atan2(ay, ax); huntA = want; }
       if (d < 650 && off < 0.12) front = true;
       if (d < 140 && off < 0.45) close = true;
       if (d < 900 && off < 0.9) seek = true;
       if (d < 240 && dx * ca + dy * sa < -20) behind = true;
-      if (d < 230 && dx * ca + dy * sa < -20 && ai.mineCd < 0 && c.mines > 0) { ctl.mine = true; ai.mineCd = rand(5, 10) * D.mine; }
+      if (d < 230 && dx * ca + dy * sa < -20 && ai.mineCd < 0 && c.mines > 0) { ctl.mine = true; ai.mineCd = rand(9, 16) * D.mine; }
     }
-    ai.spCd -= dt;
+    // shoot in short bursts with long pauses, so most of their attention goes to driving
+    if (inSights && ai.burst <= 0 && ai.calm <= 0) { ai.burst = rand(0.5, 1.2); ai.calm = ai.burst + rand(2, 4.5) / D.agg; }
+    ctl.fire = inSights && ai.burst > 0;
     if (ai.spCd < 0) {
-      const pickSp = close && c.sp.flame > 0 ? 'flame' : seek && c.sp.seeker > 0 && Math.random() < 0.5 ? 'seeker'
+      const pickSp = close && ai.burst > 0 && c.sp.flame > 0 ? 'flame' : seek && c.sp.seeker > 0 && Math.random() < 0.5 ? 'seeker'
         : front && c.sp.rocket > 0 ? 'rocket' : behind && c.sp.drum > 0 ? 'drum' : null;
-      if (pickSp) { ctl.special = pickSp; if (pickSp !== 'flame') ai.spCd = rand(2.5, 6) / Math.max(1, D.sp); }
+      if (pickSp) { ctl.special = pickSp; if (pickSp !== 'flame') ai.spCd = rand(6, 12) / D.agg; }
     }
-    // on Hard and Brutal, rivals nudge their line toward a target in front of them to land shots
+    // only on Insane do rivals steer off their line to line up a shot
     if (hunt !== null && curv < 0.5) ctl.steer = clamp(ctl.steer * 0.65 + clamp(wrap(hunt - c.a) * 3, -1, 1) * 0.35, -1, 1);
     if (Math.abs(fwd) < 22 && state === 'race') {
       ai.stuck += dt;
@@ -911,7 +915,7 @@ tr.me td{color:var(--haz);font-weight:700}
       c.spCd -= dt; c.flameT -= dt; c.flameSnd -= dt;
       if (c.burnT > 0) {
         c.burnT -= dt;
-        if (!c.dead) hurt(c, 7 * dt, c.burnBy);
+        if (!c.dead) hurt(c, 3 * dt, c.burnBy);
         if (Math.random() < 0.6) parts.push({ x: c.x + rand(-9, 9), y: c.y + rand(-6, 6), vx: rand(-15, 15), vy: rand(-40, -10), life: 0.35, max: 0.35, kind: 'fire', size: rand(3, 7) });
       }
       if (c.dead) {
@@ -1004,7 +1008,7 @@ tr.me td{color:var(--haz);font-weight:700}
       r.idx = nearest(r.x, r.y, r.idx, 12);
       const p = track.pts[r.idx];
       let boom = r.life <= 0 || hyp(r.x - p.x, r.y - p.y) > WALL;
-      if (!boom) for (const o of cars) if (o !== r.owner && !o.dead && hyp(o.x - r.x, o.y - r.y) < 18) { hurt(o, 18, r.owner); boom = true; break; }
+      if (!boom) for (const o of cars) if (o !== r.owner && !o.dead && hyp(o.x - r.x, o.y - r.y) < 18) { hurt(o, 9, r.owner); boom = true; break; }
       if (!boom) for (const pd of peds) if (hyp(pd.x - r.x, pd.y - r.y) < 10) { boom = true; break; }
       if (!boom) for (const b of bikers) if ((b.st === 'alive' || b.st === 'burning') && hyp(b.x - r.x, b.y - r.y) < 12) { boom = true; break; }
       if (!boom) for (const m of bikes) if (m.z < 10 && hyp(m.x - r.x, m.y - r.y) < 14) { boom = true; break; }
@@ -1026,7 +1030,7 @@ tr.me td{color:var(--haz);font-weight:700}
       f.t -= dt;
       if (f.t <= 0) { fires.splice(i, 1); continue; }
       if (Math.random() < 0.9) { const a = rand(0, 6.28), r = Math.sqrt(Math.random()) * f.r; parts.push({ x: f.x + Math.cos(a) * r, y: f.y + Math.sin(a) * r, vx: rand(-6, 6), vy: rand(-35, -12), life: 0.45, max: 0.45, kind: 'fire', size: rand(4, 9) }); }
-      for (const c of cars) if (!c.dead && hyp(c.x - f.x, c.y - f.y) < f.r) { hurt(c, 10 * dt, f.owner); ignite(c, f.owner, 1.6); }
+      for (const c of cars) if (!c.dead && hyp(c.x - f.x, c.y - f.y) < f.r) { hurt(c, 4.5 * dt, f.owner); ignite(c, f.owner, 1.5); }
       for (let k = peds.length - 1; k >= 0; k--) if (hyp(peds[k].x - f.x, peds[k].y - f.y) < f.r) burnPed(k, f.owner);
     }
 
