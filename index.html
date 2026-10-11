@@ -243,7 +243,45 @@ tr.me td{color:var(--haz);font-weight:700}
       }
     }
     const ms = Math.min(170 / (maxx - minx), 118 / (maxy - miny));
-    return (built[ti] = { T, pts, N, WW, WH, world, mini: { s: ms, ox: minx, oy: miny, w: (maxx - minx) * ms, h: (maxy - miny) * ms } });
+    const { line, kap } = racingLine(pts, N);
+    return (built[ti] = { T, pts, N, WW, WH, world, line, kap, mini: { s: ms, ox: minx, oy: miny, w: (maxx - minx) * ms, h: (maxy - miny) * ms } });
+  }
+
+  // Racing line in the spirit of K1999 (Remi Coulom's TORCS robot): treat the path as an elastic band
+  // inside the track edges and keep pulling every point toward the midpoint of its neighbours, coarse to
+  // fine. That straightens the straights and clips the apexes. Returns lateral offsets and curvature.
+  function racingLine(pts, N) {
+    const lim = HALF - 16, line = new Float64Array(N);
+    const px = k => { k = (k + N) % N; return pts[k].x + pts[k].nx * line[k]; };
+    const py = k => { k = (k + N) % N; return pts[k].y + pts[k].ny * line[k]; };
+    for (const step of [48, 24, 12, 6, 3, 1]) {
+      for (let it = 0; it < 50; it++) for (let k = 0; k < N; k++) {
+        const mx = (px(k - step) + px(k + step)) / 2, my = (py(k - step) + py(k + step)) / 2, p = pts[k];
+        const want = (mx - p.x) * p.nx + (my - p.y) * p.ny;
+        line[k] = clamp(line[k] + (want - line[k]) * 0.5, -lim, lim);
+      }
+    }
+    // signed curvature of the line (radians turned per pixel), lightly smoothed
+    const raw = new Float64Array(N), kap = new Float64Array(N);
+    for (let k = 0; k < N; k++) {
+      const ax = px(k - 3), ay = py(k - 3), bx = px(k), by = py(k), cx = px(k + 3), cy = py(k + 3);
+      const t = wrap(Math.atan2(cy - by, cx - bx) - Math.atan2(by - ay, bx - ax));
+      raw[k] = t / Math.max(1, (hyp(bx - ax, by - ay) + hyp(cx - bx, cy - by)) / 2);
+    }
+    for (let k = 0; k < N; k++) { let s = 0; for (let j = -2; j <= 2; j++) s += raw[(k + j + N) % N]; kap[k] = s / 5; }
+    return { line, kap };
+  }
+
+  // Speed profile: the fastest each point allows given how hard this car can turn, then a backwards pass
+  // so it starts braking early enough to arrive at every corner at that speed (the classic TORCS approach)
+  function speedProfile(c) {
+    const N = track.N, kap = track.kap, v = new Float64Array(N);
+    const rate = (2.5 + c.tire * 0.16 + c.grip * 0.08) * c.line;
+    const top = (300 + c.eng * 28) * c.spd * 1.1;
+    for (let k = 0; k < N; k++) v[k] = clamp(rate / Math.max(Math.abs(kap[k]), 1e-4), 95, top);
+    const brake = 420;
+    for (let pass = 0; pass < 2; pass++) for (let k = N - 1; k >= 0; k--) { const nx = v[(k + 1) % N]; v[k] = Math.min(v[k], Math.sqrt(nx * nx + 2 * brake * SP)); }
+    c.prof = v;
   }
 
   function drawDecor(w, kind, x, y) {
@@ -415,7 +453,7 @@ tr.me td{color:var(--haz);font-weight:700}
       x: p.x + p.nx * lat, y: p.y + p.ny * lat, a: p.a, vx: 0, vy: 0, fwd: 0, lat: 0,
       idx, lap: idx > track.N / 2 ? -1 : 0, finished: false, dead: false, deadT: 0,
       hp: cfg.hp, eng: cfg.eng, tire: cfg.tire, armor: cfg.armor, gun: cfg.gun, ammo: cfg.ammo, mines: cfg.mines,
-      turbo: 100, spd: cfg.spd, rb: 1, skill: cfg.skill || 1, tough: cfg.tough || 1, fireMul: cfg.fireMul || 1, grip: cfg.grip || 0,
+      turbo: 100, spd: cfg.spd, rb: 1, skill: cfg.skill || 1, tough: cfg.tough || 1, fireMul: cfg.fireMul || 1, grip: cfg.grip || 0, line: cfg.line || 0.88, prof: null,
       sp: Object.assign(noSpecials(), cfg.sp), spSel: 0, spCd: 0, flameT: 0, flameSnd: 0, burnT: 0, burnBy: null, lapTimes: [],
       fireCd: 0, mineCd: 0, sndCd: 0, muzzle: 0, flash: 0, bloodT: 0, offroad: false, lastHit: null, lastHitT: -99, kills: 0,
       ai: { rev: 0, revSteer: 1, stuck: 0, lane: rand(-30, 30), laneT: rand(1, 4), mineCd: rand(3, 6), turboT: 0, spCd: rand(4, 8), calm: rand(1, 3), burst: 0, rivalT: 0, rivalOk: false, boost: d.boost || 0 } };
@@ -434,6 +472,7 @@ tr.me td{color:var(--haz);font-weight:700}
       armor: clamp(Math.floor(r * 0.5) + D.up, 0, 4), gun: clamp(Math.floor(r * 0.45 + d.boost * 0.5) + D.up, 0, 3),
       ammo: Math.max(40, 60 + r * 15 + D.up * 25), mines: Math.max(1, 2 + Math.floor(r / 2) + D.up),
       spd: d.skill * (D.spd * 0.93 + r * 0.012), skill: d.skill * D.corner, tough: D.tough, fireMul: D.fire, grip: D.grip,
+      line: clamp(0.6 + 0.28 * d.skill * D.corner, 0.8, 1.0),
       sp: { rocket: D.sp * 2, seeker: D.sp + (r > 2 ? 1 : 0) * Math.sign(D.sp), flame: D.sp * 45, drum: D.sp },
     }, grid[i][0], grid[i][1]));
     player = makeCar(ME, { hp: k.hp, eng: k.eng, tire: k.tire, armor: k.armor, gun: k.gun, ammo: k.ammo, mines: k.mines, spd: 1, sp: k.sp }, grid[3][0], grid[3][1]);
@@ -777,24 +816,24 @@ tr.me td{color:var(--haz);font-weight:700}
     const ai = c.ai, N = track.N, P = track.pts;
     const ctl = { thr: 1, steer: 0, fire: false, mine: false, turbo: false };
     if (ai.rev > 0) { ai.rev -= dt; ctl.thr = -1; ctl.steer = ai.revSteer; return ctl; }
-    const fwd = c.fwd;
-    const look = Math.round(9 + Math.max(0, fwd) * 0.065);
-    const i2 = (c.idx + look) % N, p = P[i2], D = diffOf();
-    ai.laneT -= dt; if (ai.laneT < 0) { ai.lane = rand(-32, 32); ai.laneT = rand(2, 5); }
-    let lane = ai.lane;
-    // better drivers cut to the inside of the next corner instead of wandering
-    const turn = wrap(P[(c.idx + look * 2 + 12) % N].a - P[c.idx].a);
-    if (D.line && Math.abs(turn) > 0.25) lane = Math.sign(turn) * 34;
+    const fwd = c.fwd, D = diffOf();
+    if (!c.prof) speedProfile(c);
+    // pure pursuit: chase a point on the racing line that sits further ahead the faster we go
+    const look = Math.round(6 + Math.max(0, fwd) * 0.045);
+    const i2 = (c.idx + look) % N, p = P[i2];
+    ai.laneT -= dt; if (ai.laneT < 0) { ai.lane = rand(-30, 30); ai.laneT = rand(2, 5); }
+    let lane = D.line ? track.line[i2] : ai.lane * 0.6 + track.line[i2] * 0.4, dodging = false;
     const hazards = [...mines.filter(m => m.owner !== c), ...drums, ...fires];
-    for (const m of hazards) if (hyp(m.x - p.x, m.y - p.y) < (m.r || 0) + 70) { const ml = (m.x - p.x) * p.nx + (m.y - p.y) * p.ny; lane = ml > 0 ? ml - 46 - (m.r || 0) : ml + 46 + (m.r || 0); }
-    for (const g of gangs) { const ahead = (g.idx - c.idx + N) % N; if (ahead < look * 2 + 34) lane = g.gap; }
+    for (const m of hazards) if (hyp(m.x - p.x, m.y - p.y) < (m.r || 0) + 70) { const ml = (m.x - p.x) * p.nx + (m.y - p.y) * p.ny; lane = ml > 0 ? ml - 46 - (m.r || 0) : ml + 46 + (m.r || 0); dodging = true; }
+    for (const g of gangs) { const ahead = (g.idx - c.idx + N) % N; if (ahead < look * 2 + 34) { lane = g.gap; dodging = true; } }
     lane = clamp(lane, -HALF + 12, HALF - 12);
     const tx = p.x + p.nx * lane, ty = p.y + p.ny * lane;
     const diff = wrap(Math.atan2(ty - c.y, tx - c.x) - c.a);
-    ctl.steer = clamp(diff * 3, -1, 1);
+    ctl.steer = clamp(diff * 3.2, -1, 1);
+    // throttle follows the speed profile a few points ahead; it never asks to go backwards
+    const vt = c.prof[(c.idx + 4) % N] * c.rb * (dodging ? 0.85 : 1) * (Math.abs(diff) > 0.9 ? 0.6 : 1);
+    ctl.thr = fwd < vt - 6 ? 1 : fwd > vt + 30 ? -1 : 0;
     const curv = Math.abs(wrap(P[(c.idx + look * 2 + 12) % N].a - P[c.idx].a));
-    const safe = (430 - curv * 250) * c.skill;
-    ctl.thr = fwd > safe + 40 ? -1 : fwd > safe ? 0 : 1;
     ai.turboT -= dt;
     if (curv < 0.22 && c.turbo > 25 && fwd > 220 && ai.turboT < -2 && Math.random() < 0.02 + ai.boost * 0.02) ai.turboT = rand(0.8, 1.6);
     ctl.turbo = ai.turboT > 0 && curv < 0.4;
@@ -828,9 +867,10 @@ tr.me td{color:var(--haz);font-weight:700}
     }
     // only on Insane do rivals steer off their line to line up a shot
     if (hunt !== null && curv < 0.5) ctl.steer = clamp(ctl.steer * 0.65 + clamp(wrap(hunt - c.a) * 3, -1, 1) * 0.35, -1, 1);
-    if (Math.abs(fwd) < 22 && state === 'race') {
+    // only back out after a full second of pushing forward and going nowhere (wall, wreck, bike pile)
+    if (Math.abs(fwd) < 22 && ctl.thr > 0 && state === 'race') {
       ai.stuck += dt;
-      if (ai.stuck > 0.7) { ai.rev = rand(0.6, 1); ai.revSteer = -(Math.sign(diff) || 1); ai.stuck = 0; }
+      if (ai.stuck > 1.0) { ai.rev = rand(0.5, 0.8); ai.revSteer = -(Math.sign(diff) || 1); ai.stuck = 0; }
     } else ai.stuck = 0;
     // light rubber band so races stay close
     if (!c.isPlayer && player) { const gap = (prog(c) - prog(player)) / N; c.rb = gap > 0.35 ? D.rb[0] : gap < -0.35 ? D.rb[1] : 1; }
