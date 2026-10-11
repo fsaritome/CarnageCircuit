@@ -47,3 +47,15 @@ Touch devices get on-screen buttons.
 ## Credits
 
 Created by **fsaritome**. Inspired by Death Rally (Remedy Entertainment, 1996).
+
+## Development
+
+| Branch | Live at | Purpose |
+|--------|---------|---------|
+| `main` | https://fsaritome.github.io/CarnageCircuit/ | The released game |
+| `dev`  | https://fsaritome.github.io/CarnageCircuit/dev/ | Work in progress, new gadgets |
+
+- Work happens on `dev`. Every push is checked and, if it passes, published to the `/dev/` preview within a minute or two.
+- `main` is protected: changes arrive through a pull request from `dev`, and the check must pass before it can merge.
+- The dev preview keeps its own save slots, so testing never touches your real championship save.
+- Run the check locally with `node tools/check.mjs index.html`.

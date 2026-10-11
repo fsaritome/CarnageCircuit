@@ -1,0 +1,71 @@
+# Checks every push and pull request, then publishes both branches to GitHub Pages:
+#   main -> https://fsaritome.github.io/CarnageCircuit/
+#   dev  -> https://fsaritome.github.io/CarnageCircuit/dev/
+# A broken build never deploys, and main is only ever published from the main branch.
+name: Check and deploy
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check the game compiles
+        run: node tools/check.mjs index.html
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          path: dev
+        continue-on-error: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          node main/tools/check.mjs main/index.html
+          cp main/index.html _site/
+          # Only publish the dev preview if it passes the same check
+          if [ -f dev/index.html ] && node main/tools/check.mjs dev/index.html; then
+            mkdir -p _site/dev && cp dev/index.html _site/dev/
+          else
+            echo "::warning::dev preview skipped (missing or failed the check)"
+          fi
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

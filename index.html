@@ -97,6 +97,7 @@ tr.me td{color:var(--haz);font-weight:700}
 .seg button:first-child{border-radius:3px 0 0 3px;margin-left:0}
 .seg button:last-child{border-radius:0 3px 3px 0}
 .seg button[aria-pressed="true"]{background:var(--haz);color:#111;border-color:var(--haz)}
+.build{margin-left:8px;padding:2px 6px;border-radius:2px;background:var(--blood);color:#fff;font-size:11px;letter-spacing:.12em}
 .byline{color:var(--dim);font-size:13px;letter-spacing:.06em}
 .byline b{color:var(--ink);font-weight:700}
 .credits dl{display:grid;grid-template-columns:auto 1fr;gap:8px 20px;margin:0;font-size:clamp(14px,1.8vw,17px)}
@@ -121,7 +122,7 @@ tr.me td{color:var(--haz);font-weight:700}
     <div class="overlay" id="overlay"><div id="panel"></div></div>
   </div>
   <div class="foot">
-    <span>Carnage Circuit · a game by fsaritome</span>
+    <span>Carnage Circuit · a game by fsaritome <b class="build" id="build" hidden>DEV BUILD</b></span>
     <span class="row"><button id="bMute">Sound: on</button><button id="bPause">Pause</button></span>
   </div>
   <div class="pad" aria-label="Touch controls">
@@ -138,6 +139,9 @@ tr.me td{color:var(--haz);font-weight:700}
   const VW = 960, VH = 540, HALF = 62, WALL = HALF + 66, SP = 8, LAPS = 4, RACES = 6;
   const HAZ = '#f2b705', BLOOD = '#c8161d', INK = '#ece6d8';
   const $ = id => document.getElementById(id);
+  // The dev preview lives under /dev/ on the same site, so give it its own save slots
+  const CHANNEL = location.pathname.includes('/dev/') ? '-dev' : '';
+  if (CHANNEL) { document.title += ' (dev)'; $('build').hidden = false; }
   const cv = $('game'), ctx = cv.getContext('2d');
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -357,10 +361,10 @@ tr.me td{color:var(--haz);font-weight:700}
   };
   const diffOf = () => DIFF[career && career.diff] || DIFF.normal;
   let pickedDiff = 'normal';
-  try { pickedDiff = localStorage.getItem('carnage-circuit-diff') || 'normal'; } catch (_) {}
+  try { pickedDiff = localStorage.getItem('carnage-circuit-diff' + CHANNEL) || 'normal'; } catch (_) {}
   if (!DIFF[pickedDiff]) pickedDiff = 'normal';
   const PRIZE = [1000, 600, 350, 150], POINTS = [10, 6, 3, 1], KILL_BONUS = 300;
-  const SAVE_KEY = 'carnage-circuit-career';
+  const SAVE_KEY = 'carnage-circuit-career' + CHANNEL;
   let career = null;
   const freshCareer = () => ({ race: 0, diff: pickedDiff, cash: 600, eng: 0, tire: 0, armor: 0, gun: 0, hp: 100, ammo: 100, mines: 3,
     pts: Object.fromEntries([ME, ...RIVALS].map(d => [d.name, 0])) });
@@ -1072,7 +1076,7 @@ tr.me td{color:var(--haz);font-weight:700}
     else if (act.startsWith('diff:')) {
       const key = act.slice(5);
       if (DIFF[key]) {
-        pickedDiff = key; try { localStorage.setItem('carnage-circuit-diff', key); } catch (_) {}
+        pickedDiff = key; try { localStorage.setItem('carnage-circuit-diff' + CHANNEL, key); } catch (_) {}
         if (state === 'garage') { k.diff = key; garage(); }
         else panel.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b));
       }
