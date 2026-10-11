@@ -123,7 +123,7 @@ tr.me td{color:var(--haz);font-weight:700}
   </div>
   <div class="foot">
     <span>Carnage Circuit · a game by fsaritome <b class="build" id="build" hidden>DEV BUILD</b></span>
-    <span class="row"><button id="bMute">Sound: on</button><button id="bPause">Pause</button></span>
+    <span class="row"><button id="bGore">Blood: on</button><button id="bMute">Sound: on</button><button id="bPause">Pause</button></span>
   </div>
   <div class="pad" aria-label="Touch controls">
     <div class="grp"><button data-key="ArrowLeft">◀</button><button data-key="ArrowRight">▶</button></div>
@@ -367,6 +367,7 @@ tr.me td{color:var(--haz);font-weight:700}
     crash: v => { noise(0.22, 'lowpass', 900, 0.6 * v); tone('triangle', 140, 50, 0.15, 0.25 * v); },
     scream: v => { const f = rand(900, 1300); tone('sawtooth', f, f * 1.15, 0.08, 0.1 * v); tone('sawtooth', f * 1.1, f * 0.35, 0.45, 0.12 * v, 0.07); noise(0.18, 'lowpass', 600, 0.6 * v); },
     ping: v => { noise(0.04, 'bandpass', 3200, 0.2 * v); },
+    bonk: v => { tone('square', 320, 140, 0.12, 0.12 * v); tone('sine', 900, 1400, 0.08, 0.06 * v, 0.05); },
     pickup: () => { tone('square', 660, 660, 0.06, 0.08); tone('square', 990, 990, 0.09, 0.08, 0.06); },
     mine: () => { tone('triangle', 300, 150, 0.12, 0.15); },
     beep: hi => { tone('square', hi ? 1040 : 520, hi ? 1040 : 520, hi ? 0.45 : 0.15, 0.12); },
@@ -380,6 +381,14 @@ tr.me td{color:var(--haz);font-weight:700}
     if (master) master.gain.setTargetAtTime(muted ? 0 : 0.45, ac.currentTime, 0.02);
   }
   $('bMute').onclick = () => { initAudio(); toggleMute(); };
+
+  // Blood switch: off swaps blood, gibs and screams for dust puffs and cartoon bonks
+  let gore = true;
+  try { gore = localStorage.getItem('carnage-circuit-gore' + CHANNEL) !== 'off'; } catch (_) {}
+  const showGore = () => { $('bGore').textContent = 'Blood: ' + (gore ? 'on' : 'off'); };
+  showGore();
+  $('bGore').onclick = () => { gore = !gore; showGore(); try { localStorage.setItem('carnage-circuit-gore' + CHANNEL, gore ? 'on' : 'off'); } catch (_) {} };
+  const yelp = v => gore ? sfx.scream(v) : sfx.bonk(v);
 
   // ================= career =================
   const UP = {
@@ -510,6 +519,7 @@ tr.me td{color:var(--haz);font-weight:700}
   }
 
   function burst(x, y, n, kind) {
+    if (kind === 'gib' && !gore) kind = 'dust';
     for (let i = 0; i < n; i++) {
       const a = rand(0, 6.28), s = kind === 'smoke' ? rand(10, 50) : kind === 'fire' ? rand(40, 200) : rand(60, 320);
       parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: kind === 'smoke' ? rand(0.8, 1.6) : rand(0.25, 0.7), max: 1, kind,
@@ -519,6 +529,7 @@ tr.me td{color:var(--haz);font-weight:700}
   }
 
   function bloodSplat(x, y, dir, n) {
+    if (!gore) return;
     for (let i = 0; i < n; i++) {
       const d = rand(0, 26), a = dir + rand(-0.7, 0.7);
       dctx.fillStyle = `rgba(${Math.floor(rand(110, 175))},${Math.floor(rand(0, 14))},${Math.floor(rand(0, 12))},${rand(0.55, 0.9)})`;
@@ -564,9 +575,9 @@ tr.me td{color:var(--haz);font-weight:700}
   function burnPed(i, by) {
     const p = peds[i];
     dctx.fillStyle = 'rgba(22,16,12,.85)'; dctx.beginPath(); dctx.ellipse(p.x, p.y, 7, 5, rand(0, 3), 0, 7); dctx.fill();
-    dctx.fillStyle = 'rgba(110,10,6,.6)'; dctx.beginPath(); dctx.arc(p.x + rand(-3, 3), p.y + rand(-3, 3), 3, 0, 7); dctx.fill();
+    if (gore) { dctx.fillStyle = 'rgba(110,10,6,.6)'; dctx.beginPath(); dctx.arc(p.x + rand(-3, 3), p.y + rand(-3, 3), 3, 0, 7); dctx.fill(); }
     burst(p.x, p.y, 8, 'fire'); burst(p.x, p.y, 4, 'smoke');
-    sfx.scream(near(p.x, p.y));
+    yelp(near(p.x, p.y));
     if (by && by.isPlayer) floats.push({ x: p.x, y: p.y - 12, text: pick(['TOASTED', 'WELL DONE', 'CRISPY', 'FLAMBÉ']), life: 1, color: '#ff8a1f' });
     peds.splice(i, 1);
   }
@@ -659,6 +670,7 @@ tr.me td{color:var(--haz);font-weight:700}
 
   // shared physics for flying bodies, limbs and bikes: gravity, bounce, slide, spin, walls
   function phys(o, dt, fric, bleed) {
+    bleed = bleed && gore;
     if (o.z > 0 || o.vz > 0) {
       o.vz -= 900 * dt; o.z += o.vz * dt;
       if (o.z <= 0) {
@@ -688,12 +700,12 @@ tr.me td{color:var(--haz);font-weight:700}
     b.st = 'dead'; b.burnT = 0;
     if (how === 'char') { b.charred = true; burst(b.x, b.y, 10, 'fire'); burst(b.x, b.y, 6, 'smoke'); }
     else { bloodSplat(b.x, b.y, dir, 26); burst(b.x, b.y, 18, 'gib'); }
-    sfx.scream(near(b.x, b.y));
+    yelp(near(b.x, b.y));
     if (by && by.isPlayer) {
       career.cash += 50;
       if (raceT - (killBiker.lastT || -9) < 0.35) return; // one callout at a time when a whole gang goes up
       killBiker.lastT = raceT;
-      floats.push({ x: b.x, y: b.y - 14, text: how === 'char' ? pick(['BIKER BBQ', 'CHARGRILLED']) : how === 'blast' ? pick(['AIRMAIL', 'SPLATTERED', 'LIFTOFF']) : pick(['ROADKILL', 'HOOD ORNAMENT', 'TOLL PAID', 'SPEED BUMP']), life: 1.1, color: BLOOD });
+      floats.push({ x: b.x, y: b.y - 14, text: !gore ? pick(['KNOCKED OUT', 'BONK', 'WIPEOUT', 'NIGHTY NIGHT']) : how === 'char' ? pick(['BIKER BBQ', 'CHARGRILLED']) : how === 'blast' ? pick(['AIRMAIL', 'SPLATTERED', 'LIFTOFF']) : pick(['ROADKILL', 'HOOD ORNAMENT', 'TOLL PAID', 'SPEED BUMP']), life: 1.1, color: BLOOD });
     }
   }
   // blown to pieces: the body is replaced by flying limbs, a head and a lot of red
@@ -714,7 +726,7 @@ tr.me td{color:var(--haz);font-weight:700}
       if (d > R * 1.4) continue;
       const k = 1 - d / (R * 1.4), nx = (b.x - x) / (d || 1), ny = (b.y - y) / (d || 1);
       if (b.st !== 'dead') killBiker(b, by, 'blast', Math.atan2(ny, nx));
-      if (d < R * 0.55 && Math.random() < 0.7) { gibBiker(b, nx, ny, 0.6 + k); continue; }
+      if (gore && d < R * 0.55 && Math.random() < 0.7) { gibBiker(b, nx, ny, 0.6 + k); continue; }
       b.vx += nx * 720 * k + rand(-60, 60); b.vy += ny * 720 * k + rand(-60, 60); b.vz += 260 + 480 * k; b.spin = rand(-24, 24);
     }
     for (const o of debris) {
@@ -731,7 +743,7 @@ tr.me td{color:var(--haz);font-weight:700}
   function igniteBiker(b, by) {
     if (b.st !== 'alive') return;
     b.st = 'burning'; b.burnT = rand(1.8, 3); b.by = by; b.a = rand(0, 6.28);
-    sfx.scream(near(b.x, b.y));
+    yelp(near(b.x, b.y));
   }
 
   function updateGang(dt) {
@@ -796,8 +808,8 @@ tr.me td{color:var(--haz);font-weight:700}
   function killPed(i, dir, car) {
     const p = peds[i];
     bloodSplat(p.x, p.y, dir, 16); burst(p.x, p.y, 10, 'gib');
-    sfx.scream(near(p.x, p.y));
-    if (car) { car.bloodT = 2.2; if (car.isPlayer) floats.push({ x: p.x, y: p.y - 12, text: pick(['SPLAT', 'SQUISH', 'OOPS', 'ROADKILL']), life: 1 }); }
+    yelp(near(p.x, p.y));
+    if (car) { car.bloodT = 2.2; if (car.isPlayer) floats.push({ x: p.x, y: p.y - 12, text: gore ? pick(['SPLAT', 'SQUISH', 'OOPS', 'ROADKILL']) : pick(['BONK', 'OOF', 'WHOOPS', 'POOF']), life: 1, color: gore ? BLOOD : HAZ }); }
     peds.splice(i, 1);
   }
 
@@ -905,8 +917,8 @@ tr.me td{color:var(--haz);font-weight:700}
     c.vx = ca * fwd - sa * lat; c.vy = sa * fwd + ca * lat;
     c.fwd = fwd; c.lat = lat;
     // tyre marks, red after a splat
-    if (Math.abs(lat) > 75 || (ctl.thr < 0 && fwd > 160) || turbo && Math.random() < 0.3 || c.bloodT > 0 && Math.abs(fwd) > 40) {
-      dctx.fillStyle = c.bloodT > 0 ? `rgba(130,8,8,${0.35 * clamp(c.bloodT, 0, 1)})` : 'rgba(18,14,12,.22)';
+    if (Math.abs(lat) > 75 || (ctl.thr < 0 && fwd > 160) || turbo && Math.random() < 0.3 || c.bloodT > 0 && gore && Math.abs(fwd) > 40) {
+      dctx.fillStyle = c.bloodT > 0 && gore ? `rgba(130,8,8,${0.35 * clamp(c.bloodT, 0, 1)})` : 'rgba(18,14,12,.22)';
       for (const s of [-8, 8]) dctx.fillRect(c.x - ca * 12 - sa * s - 2, c.y - sa * 12 + ca * s - 2, 4, 4);
     }
   }
@@ -1261,7 +1273,7 @@ tr.me td{color:var(--haz);font-weight:700}
       ctx.beginPath(); ctx.moveTo(-4, -2); ctx.lineTo(-12, -6); ctx.moveTo(-4, 2); ctx.lineTo(-11, 7); ctx.stroke();
       ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(3, -3); ctx.lineTo(7, -10); ctx.moveTo(3, 3); ctx.lineTo(9, 7); ctx.stroke();
       ctx.fillStyle = c; ctx.beginPath(); ctx.ellipse(0, 0, 6.5, 5, 0, 0, 7); ctx.fill();
-      if (!b.charred) { ctx.fillStyle = 'rgba(150,10,8,.85)'; ctx.beginPath(); ctx.arc(rand(-2, 2), rand(-2, 2), 3, 0, 7); ctx.fill(); }
+      if (!b.charred && gore) { ctx.fillStyle = 'rgba(150,10,8,.85)'; ctx.beginPath(); ctx.arc(rand(-2, 2), rand(-2, 2), 3, 0, 7); ctx.fill(); }
       ctx.translate(9, 0); if (b.charred) { ctx.fillStyle = '#17110d'; ctx.beginPath(); ctx.arc(0, 0, 3.6, 0, 7); ctx.fill(); } else headOf(b);
       ctx.restore();
       return;
@@ -1328,6 +1340,7 @@ tr.me td{color:var(--haz);font-weight:700}
       if (p.kind === 'smoke') { ctx.fillStyle = `rgba(60,58,56,${0.45 * f})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (2 - f), 0, 7); ctx.fill(); }
       else if (p.kind === 'flame') { ctx.fillStyle = f > 0.6 ? `rgba(255,240,150,${f})` : f > 0.3 ? `rgba(255,150,30,${f * 1.2})` : `rgba(200,50,10,${f * 2})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.6 - f), 0, 7); ctx.fill(); }
       else if (p.kind === 'fire') { ctx.fillStyle = f > 0.5 ? `rgba(255,220,90,${f})` : `rgba(240,90,20,${f * 1.4})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.5 + f), 0, 7); ctx.fill(); }
+      else if (p.kind === 'dust') { ctx.fillStyle = `rgba(214,196,160,${0.6 * f})`; ctx.beginPath(); ctx.arc(p.x, p.y, 3 + (1 - f) * 7, 0, 7); ctx.fill(); }
       else if (p.kind === 'gib') { ctx.fillStyle = '#9a0c0c'; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); }
       else { ctx.fillStyle = `rgba(255,230,140,${f})`; ctx.fillRect(p.x - 1, p.y - 1, 2.5, 2.5); }
     }
