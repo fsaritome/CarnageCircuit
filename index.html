@@ -1736,22 +1736,27 @@ tr.me td{color:var(--haz);font-weight:700}
       document.head.appendChild(s);
     });
   }
-  async function brokerConnect(only) {
-    await loadMqtt();
-    const order = only === undefined ? BROKERS.map((_, i) => i) : [only];
-    for (const i of order) {
-      try {
-        const cl = await new Promise((res, rej) => {
-          const c = window.mqtt.connect(BROKERS[i], { connectTimeout: 7000, reconnectPeriod: 0, clean: true, clientId: 'cc_' + Math.random().toString(36).slice(2, 12) });
-          const to = setTimeout(() => { c.end(true); rej(new Error('timeout')); }, 8000);
-          c.once('connect', () => { clearTimeout(to); res(c); });
-          c.once('error', err => { clearTimeout(to); c.end(true); rej(err); });
-        });
-        return { cl, bi: i };
-      } catch (_) { /* try the next relay */ }
-    }
-    throw new Error('Could not reach the matchmaking relay. Check your internet connection and try again.');
+  // The free public relays sometimes ignore a connection attempt, so try each one a few times,
+  // and use every relay that answers: host and guests both listen and talk on all of them.
+  function relayOnce(url) {
+    return new Promise((res, rej) => {
+      const c = window.mqtt.connect(url, { connectTimeout: 4500, reconnectPeriod: 0, clean: true, clientId: 'cc_' + Math.random().toString(36).slice(2, 12) });
+      const to = setTimeout(() => { c.end(true); rej(new Error('timeout')); }, 5000);
+      c.once('connect', () => { clearTimeout(to); c.removeAllListeners('error'); c.on('error', () => {}); res(c); });
+      c.once('error', err => { clearTimeout(to); c.end(true); rej(err); });
+    });
   }
+  async function relay(url) {
+    for (let attempt = 0; attempt < 3; attempt++) { try { return await relayOnce(url); } catch (_) { /* retry */ } }
+    return null;
+  }
+  async function brokerConnectAll() {
+    await loadMqtt();
+    const clients = (await Promise.all(BROKERS.map(relay))).filter(Boolean);
+    if (!clients.length) throw new Error('Could not reach any matchmaking relay. Check your internet connection and try again.');
+    return clients;
+  }
+  const endRelays = () => { for (const c of NET.mq || []) { try { c.end(true); } catch (_) {} } };
   // non-trickle ICE: wait until the offer/answer already lists every way to reach this browser
   function iceDone(pc) {
     return new Promise(res => {
@@ -1765,7 +1770,7 @@ tr.me td{color:var(--haz);font-weight:700}
   function netReset() {
     for (const p of NET.peers.values()) { try { p.pc.close(); } catch (_) {} }
     if (NET.host) { try { NET.host.pc.close(); } catch (_) {} }
-    if (NET.mq) { try { NET.mq.end(true); } catch (_) {} }
+    endRelays();
     clearTimeout(NET.joinTimer);
     Object.assign(NET, { role: null, live: false, mq: null, room: '', topic: '', host: null, myPid: 0, lobby: [], inputs: {}, evq: [], pq: {}, wallDmg: 0, status: '' });
     NET.peers = new Map();
@@ -1783,23 +1788,26 @@ tr.me td{color:var(--haz);font-weight:700}
     NET.lobby = [{ pid: 0, name: netName || 'Host' }];
     NET.status = 'Opening a room…'; onlineScreen('hosting');
     try {
-      const { cl, bi } = await brokerConnect();
-      if (NET.role !== 'host') { cl.end(true); return; }
+      const clients = await brokerConnectAll();
+      if (NET.role !== 'host') { for (const c of clients) c.end(true); return; }
       let code = ''; for (let i = 0; i < 5; i++) code += CODE_ABC[Math.floor(Math.random() * CODE_ABC.length)];
-      NET.mq = cl; NET.room = code + (bi ? String(bi) : '');
+      NET.mq = clients; NET.room = code;
       NET.topic = 'carnage-circuit/v1/' + NET.room;
-      cl.subscribe(NET.topic + '/host', { qos: 1 });
-      cl.on('message', (t, m) => { let d; try { d = JSON.parse(m.toString()); } catch (_) { return; } hostSignal(d); });
+      for (const cl of clients) {
+        cl.subscribe(NET.topic + '/host', { qos: 1 });
+        cl.on('message', (t, m) => { let d; try { d = JSON.parse(m.toString()); } catch (_) { return; } hostSignal(d, cl); });
+      }
       NET.status = 'Send the room code to your friends. Up to 3 can join.';
     } catch (e) { netReset(); NET.status = ''; onlineScreen('menu', e.message); return; }
     if (state === 'lobby' && NET.view === 'hosting') onlineScreen('hosting');
   }
-  function toGuest(id, obj) { if (NET.mq) NET.mq.publish(NET.topic + '/g/' + id, JSON.stringify(obj), { qos: 1 }); }
-  async function hostSignal(d) {
+  function toGuest(cl, id, obj) { cl.publish(NET.topic + '/g/' + id, JSON.stringify(obj), { qos: 1 }); }
+  async function hostSignal(d, cl) {
     if (d.t === 'join' && d.id) {
-      if (state !== 'lobby') return toGuest(d.id, { t: 'refuse', why: 'That race has already started. Ask the host to open the lobby again.' });
+      if ([...NET.peers.values()].some(p => p.id === d.id)) return; // same guest heard on another relay
+      if (state !== 'lobby') return toGuest(cl, d.id, { t: 'refuse', why: 'That race has already started. Ask the host to open the lobby again.' });
       const pid = [1, 2, 3].find(p => !NET.peers.has(p));
-      if (!pid) return toGuest(d.id, { t: 'refuse', why: 'That room is full.' });
+      if (!pid) return toGuest(cl, d.id, { t: 'refuse', why: 'That room is full.' });
       const pc = new RTCPeerConnection({ iceServers: ICE });
       const peer = { pc, pid, id: d.id, name: cleanName(d.name) || 'Player ' + (pid + 1), open: false,
         rel: pc.createDataChannel('rel', { ordered: true }), fast: pc.createDataChannel('fast', { ordered: false, maxRetransmits: 0 }) };
@@ -1807,7 +1815,7 @@ tr.me td{color:var(--haz);font-weight:700}
       wirePeer(peer);
       await pc.setLocalDescription(await pc.createOffer());
       await iceDone(pc);
-      toGuest(d.id, { t: 'offer', sdp: pc.localDescription.sdp, pid });
+      toGuest(cl, d.id, { t: 'offer', sdp: pc.localDescription.sdp, pid });
     } else if (d.t === 'answer') {
       const peer = [...NET.peers.values()].find(p => p.id === d.id);
       if (peer && !peer.pc.remoteDescription) { try { await peer.pc.setRemoteDescription({ type: 'answer', sdp: d.sdp }); } catch (_) { dropPeer(peer); } }
@@ -1968,17 +1976,18 @@ tr.me td{color:var(--haz);font-weight:700}
     NET.role = 'guest'; NET.room = code;
     NET.status = 'Looking for room ' + code + '…'; onlineScreen('joined');
     try {
-      const { cl } = await brokerConnect(code.length > 5 ? +code[5] || 0 : 0);
-      if (NET.role !== 'guest') { cl.end(true); return; }
-      NET.mq = cl; NET.topic = 'carnage-circuit/v1/' + code;
+      const clients = await brokerConnectAll();
+      if (NET.role !== 'guest') { for (const c of clients) c.end(true); return; }
+      NET.mq = clients; NET.topic = 'carnage-circuit/v1/' + code.slice(0, 5);
       const id = Math.random().toString(36).slice(2, 12);
-      cl.subscribe(NET.topic + '/g/' + id, { qos: 1 });
-      cl.on('message', (t, m) => { let d; try { d = JSON.parse(m.toString()); } catch (_) { return; } guestSignal(d, id); });
-      cl.publish(NET.topic + '/host', JSON.stringify({ t: 'join', id, name: netName }), { qos: 1 });
+      for (const cl of clients) {
+        cl.subscribe(NET.topic + '/g/' + id, { qos: 1 }, () => cl.publish(NET.topic + '/host', JSON.stringify({ t: 'join', id, name: netName }), { qos: 1 }));
+        cl.on('message', (t, m) => { let d; try { d = JSON.parse(m.toString()); } catch (_) { return; } guestSignal(d, id, cl); });
+      }
       NET.joinTimer = setTimeout(() => { if (!NET.host || !NET.host.open) guestFail('No answer from room ' + code + '. Check the code, and make sure the host has the room open.'); }, 20000);
     } catch (e) { guestFail(e.message); }
   }
-  async function guestSignal(d, id) {
+  async function guestSignal(d, id, cl) {
     if (d.t === 'refuse') return guestFail(d.why);
     if (d.t !== 'offer' || NET.host) return;
     const pc = new RTCPeerConnection({ iceServers: ICE });
@@ -1995,7 +2004,7 @@ tr.me td{color:var(--haz);font-weight:700}
     await pc.setRemoteDescription({ type: 'offer', sdp: d.sdp });
     await pc.setLocalDescription(await pc.createAnswer());
     await iceDone(pc);
-    NET.mq.publish(NET.topic + '/host', JSON.stringify({ t: 'answer', id, sdp: pc.localDescription.sdp }), { qos: 1 });
+    cl.publish(NET.topic + '/host', JSON.stringify({ t: 'answer', id, sdp: pc.localDescription.sdp }), { qos: 1 });
   }
   function guestFail(why) {
     if (NET.role !== 'guest') return;
@@ -2150,7 +2159,7 @@ tr.me td{color:var(--haz);font-weight:700}
       <label class="field"><span class="eyebrow">Your name</span><input id="netName" maxlength="14" value="${esc(netName)}" placeholder="Driver name" autocomplete="off"></label>
       <div class="row"><button class="go" data-act="net:host">Host a race</button></div>
       <div class="row join"><label class="field"><span class="eyebrow">Room code</span><input id="netCode" maxlength="6" placeholder="ABCDE" autocomplete="off" spellcheck="false"></label><button data-act="net:join">Join</button></div>
-      <p class="ds">Up to 4 drivers; empty seats get rivals. A free public relay (HiveMQ) only introduces the browsers to each other; the race itself runs directly between you over WebRTC.</p>
+      <p class="ds">Up to 4 drivers; empty seats get rivals. Free public relays (HiveMQ, EMQX, Mosquitto) only introduce the browsers to each other; the race itself runs directly between you over WebRTC.</p>
       <div class="row"><button data-act="net:back">Back</button></div>`;
     else if (view === 'hosting') body = `
       <div class="room"><span class="eyebrow">Room code</span><b class="code">${NET.room ? esc(NET.room) : '·····'}</b>${NET.room ? '<button data-act="net:copy">Copy</button>' : ''}</div>
