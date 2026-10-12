@@ -59,3 +59,8 @@ Created by **fsaritome**. Inspired by Death Rally (Remedy Entertainment, 1996).
 - `main` is protected: changes arrive through a pull request from `dev`, and the check must pass before it can merge.
 - The dev preview keeps its own save slots, so testing never touches your real championship save.
 - Run the check locally with `node tools/check.mjs index.html`.
+
+## License
+
+© 2026 fsaritome. All rights reserved. You may play the game and read this repository, but copying, modifying,
+re-hosting or redistributing it is not permitted without written permission. See [LICENSE](LICENSE).
