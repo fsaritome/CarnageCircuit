@@ -141,7 +141,7 @@ tr.me td{color:var(--haz);font-weight:700}
   const HAZ = '#f2b705', BLOOD = '#c8161d', INK = '#ece6d8';
   const $ = id => document.getElementById(id);
   // The dev preview lives under /dev/ on the same site, so give it its own save slots
-  const CHANNEL = location.pathname.includes('/dev/') ? '-dev' : '';
+  const CHANNEL = location.pathname.includes('/dev/') ? '-dev' : location.pathname.includes('/mp/') ? '-mp' : '';
   if (CHANNEL) { document.title += ' (dev)'; $('build').hidden = false; }
   const cv = $('game'), ctx = cv.getContext('2d');
   const rand = (a, b) => a + Math.random() * (b - a);

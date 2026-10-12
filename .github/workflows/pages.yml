@@ -1,12 +1,14 @@
 # Checks every push and pull request, then publishes both branches to GitHub Pages:
 #   main -> https://fsaritome.github.io/CarnageCircuit/
 #   dev  -> https://fsaritome.github.io/CarnageCircuit/dev/
+#   multiplayer -> https://fsaritome.github.io/CarnageCircuit/mp/
 # A broken build never deploys, and main is only ever published from the main branch.
+# Every branch builds the whole site, so all three previews stay up whichever branch pushed.
 name: Check and deploy
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, multiplayer]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -48,6 +50,11 @@ jobs:
           ref: dev
           path: dev
         continue-on-error: true
+      - uses: actions/checkout@v4
+        with:
+          ref: multiplayer
+          path: mp
+        continue-on-error: true
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -61,6 +68,11 @@ jobs:
             mkdir -p _site/dev && cp dev/index.html _site/dev/
           else
             echo "::warning::dev preview skipped (missing or failed the check)"
+          fi
+          if [ -f mp/index.html ] && node main/tools/check.mjs mp/index.html; then
+            mkdir -p _site/mp && cp mp/index.html _site/mp/
+          else
+            echo "::warning::multiplayer preview skipped (missing or failed the check)"
           fi
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5
