@@ -1,11 +1,11 @@
 # Roadmap and ideas
 
-## Status (2026-10-11)
+## Status (2026-10-12)
 
-- `main` (released): the game with credits, 4 difficulty levels and the first damage tuning.
-- `dev` (not yet released): special weapons, the Iron Vultures biker gang, the TORCS-style racing AI,
-  same-class rivals and the 5-level difficulty, damage cuts, the blood switch, README updates.
-  **Next step: release `dev` → `main` via a pull request** once fsaritome has playtested it.
+- Everything is released to `main`: special weapons, the Iron Vultures biker gang, the TORCS-style racing
+  AI, same-class rivals and the 5-level difficulty, damage cuts, the blood switch, online multiplayer,
+  the all-rights-reserved license. `dev` and `multiplayer` are in sync with `main`.
+- New work starts on `dev` again (or a feature branch), released to `main` through a pull request.
 
 ## Needs a human playtest
 
@@ -16,10 +16,9 @@
 
 ## Multiplayer
 
-- **Online with room codes: built** on the `multiplayer` branch, preview at https://fsaritome.github.io/CarnageCircuit/mp/
-  (see DECISIONS.md). Tested with two browser tabs: connect in ~4 s, guest driving, damage sync,
-  results, back to the lobby, second race.
-- Needs: a test between two real computers on different networks; then merge `multiplayer` → `dev` → `main`.
+- **Online with room codes: released** (see DECISIONS.md). Tested with two browser tabs: connect in ~4 s,
+  guest driving, damage sync, results, back to the lobby, second race.
+- Still untested: two real computers on different networks.
 - Possible next steps: a TURN fallback for strict networks (needs a hosted service), copy-paste invite
   codes as a no-relay fallback, spectating after you finish, guest-side smoothing tweaks, chat/emotes,
   online championships with money and the garage.
