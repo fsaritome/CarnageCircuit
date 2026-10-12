@@ -2151,7 +2151,7 @@ tr.me td{color:var(--haz);font-weight:700}
 
   // ---------- screens ----------
   function onlineScreen(view, note = '') {
-    if (state !== 'netresults') state = 'lobby';
+    state = 'lobby';
     NET.view = view;
     const players = NET.lobby.map(p => `<li>${dot(HUMAN_COLORS[p.pid][0])}${esc(p.name)}${p.pid === NET.myPid && NET.role ? ' <span class="ds">(you)</span>' : ''}${p.pid === 0 ? ' <span class="ds">· host</span>' : ''}</li>`).join('');
     let body = '';
