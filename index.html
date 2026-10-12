@@ -103,6 +103,14 @@ tr.me td{color:var(--haz);font-weight:700}
 .credits dl{display:grid;grid-template-columns:auto 1fr;gap:8px 20px;margin:0;font-size:clamp(14px,1.8vw,17px)}
 .credits dt{color:var(--dim);font-weight:600;font-size:12px;letter-spacing:.14em;text-transform:uppercase;padding-top:3px}
 .credits dd{margin:0;font-weight:700;min-width:0;overflow-wrap:anywhere}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field input{font:600 16px var(--body);background:var(--steel);color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:.55em .7em;width:15em;max-width:100%;box-sizing:border-box}
+.field input:focus-visible{outline:none;border-color:var(--haz);box-shadow:0 0 0 2px var(--haz)}
+#netCode{text-transform:uppercase;letter-spacing:.2em;width:9em}
+.row.join{align-items:flex-end}
+.room{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.code{font-family:var(--display);font-weight:400;font-size:clamp(30px,6vw,52px);letter-spacing:.14em;color:var(--haz)}
+.plist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-weight:600}
 .pad{display:none;justify-content:space-between;gap:10px}
 .pad .grp{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .pad button{width:60px;height:52px;padding:0;font-size:11px;touch-action:none}
@@ -142,7 +150,12 @@ tr.me td{color:var(--haz);font-weight:700}
   const $ = id => document.getElementById(id);
   // The dev preview lives under /dev/ on the same site, so give it its own save slots
   const CHANNEL = location.pathname.includes('/dev/') ? '-dev' : location.pathname.includes('/mp/') ? '-mp' : '';
-  if (CHANNEL) { document.title += ' (dev)'; $('build').hidden = false; }
+  if (CHANNEL) { document.title += CHANNEL === '-mp' ? ' (multiplayer)' : ' (dev)'; $('build').hidden = false; if (CHANNEL === '-mp') $('build').textContent = 'MULTIPLAYER BUILD'; }
+  // Online play state. role: null (single player), 'host' (runs the race) or 'guest' (drives its own car, shows the host's race)
+  const NET = { role: null, live: false, mq: null, room: '', topic: '', peers: new Map(), host: null, myPid: 0, lobby: [], track: 0,
+    inputs: {}, evq: [], pq: {}, sendT: 0, inT: 0, wallDmg: 0, status: '', view: 'menu',
+    ev(e) { if (this.role === 'host' && this.live) this.evq.push(e); },
+    to(pid, e) { if (this.role === 'host' && this.live) (this.pq[pid] = this.pq[pid] || []).push(e); } };
   const cv = $('game'), ctx = cv.getContext('2d');
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -311,9 +324,10 @@ tr.me td{color:var(--haz);font-weight:700}
   const held = a => BIND[a].some(k => keys[k]);
   const GAMEKEYS = new Set(Object.values(BIND).flat());
   addEventListener('keydown', e => {
+    if (e.target && e.target.tagName === 'INPUT') return;
     const racing = state === 'race' || state === 'count' || state === 'ending';
     if (GAMEKEYS.has(e.code) && racing) e.preventDefault();
-    if (BIND.cycle.includes(e.code) && racing && !e.repeat) cycleSpecial(player);
+    if (BIND.cycle.includes(e.code) && racing && !e.repeat) { cycleSpecial(player); if (NET.role === 'guest') netSendHost({ t: 'cy' }); }
     keys[e.code] = true;
     if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
     if (e.code === 'KeyM') toggleMute();
@@ -322,7 +336,7 @@ tr.me td{color:var(--haz);font-weight:700}
   addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (state === 'race' || state === 'count') togglePause(); });
   document.querySelectorAll('.pad button').forEach(b => {
     const k = b.dataset.key;
-    const on = e => { e.preventDefault(); keys[k] = true; b.classList.add('on'); initAudio(); if (BIND.cycle.includes(k) && player) cycleSpecial(player); };
+    const on = e => { e.preventDefault(); keys[k] = true; b.classList.add('on'); initAudio(); if (BIND.cycle.includes(k) && player) { cycleSpecial(player); if (NET.role === 'guest') netSendHost({ t: 'cy' }); } };
     const off = e => { e.preventDefault(); keys[k] = false; b.classList.remove('on'); };
     b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
     b.addEventListener('pointerleave', off); b.addEventListener('pointercancel', off);
@@ -360,7 +374,10 @@ tr.me td{color:var(--haz);font-weight:700}
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.02);
   }
-  const near = (x, y) => player ? clamp(1 - hyp(x - player.x, y - player.y) / 950, 0, 1) : 1;
+  // lastNear remembers where the latest distance-scaled sound came from, so the host can forward it to guests
+  let lastNear = null;
+  const near = (x, y) => { const v = player ? clamp(1 - hyp(x - player.x, y - player.y) / 950, 0, 1) : 1; lastNear = [x, y, v]; return v; };
+  const nearCar = (c, k = 1) => c.isPlayer ? (lastNear = [c.x, c.y, 1], k) : near(c.x, c.y) * k;
   const sfx = {
     gun: v => { noise(0.06, 'highpass', 900, 0.32 * v); tone('square', 180, 60, 0.05, 0.08 * v); },
     boom: v => { noise(0.9, 'lowpass', 380, 1.0 * v); tone('sine', 110, 30, 0.6, 0.5 * v); },
@@ -376,6 +393,19 @@ tr.me td{color:var(--haz);font-weight:700}
     flame: v => { noise(0.16, 'lowpass', 1700, 0.3 * v); },
     swap: () => { tone('square', 440, 660, 0.05, 0.06); },
   };
+  // online host: every sound also goes to the guests with its position; personal ones only to their player (psfx)
+  const PERSONAL_SFX = new Set(['pickup', 'swap', 'lap', 'mine']);
+  for (const name of Object.keys(sfx)) {
+    const play = sfx[name];
+    sfx[name] = v => {
+      if (NET.role === 'host' && NET.live && !PERSONAL_SFX.has(name)) {
+        const tag = name === 'scream' || name === 'bonk' ? 'yelp' : name, ln = lastNear;
+        NET.ev(ln ? ['s', tag, Math.round(ln[0]), Math.round(ln[1]), ln[2] > 0.02 ? +(v / ln[2]).toFixed(2) : 1] : ['s', tag, v]);
+      }
+      lastNear = null;
+      play(v);
+    };
+  }
   function toggleMute() {
     muted = !muted; $('bMute').textContent = 'Sound: ' + (muted ? 'off' : 'on');
     if (master) master.gain.setTargetAtTime(muted ? 0 : 0.45, ac.currentTime, 0.02);
@@ -437,7 +467,7 @@ tr.me td{color:var(--haz);font-weight:700}
   const freshCareer = () => ({ race: 0, diff: pickedDiff, cash: 600, eng: 0, tire: 0, armor: 0, gun: 0, hp: 100, ammo: 100, mines: 3,
     sp: { rocket: 2, seeker: 0, flame: 0, drum: 1 },
     pts: Object.fromEntries([ME, ...RIVALS].map(d => [d.name, 0])) });
-  function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(career)); } catch (_) {} }
+  function save() { if (!career || career.attract || career.online) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify(career)); } catch (_) {} }
   function load() { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return s && typeof s.race === 'number' ? s : null; } catch (_) { return null; } }
 
   // ================= race state =================
@@ -448,7 +478,7 @@ tr.me td{color:var(--haz);font-weight:700}
   const cam = { x: 0, y: 0 };
   // Test hook, dev preview only
   if (CHANNEL) window.__cc = { get state() { return state; }, get cars() { return cars; }, get raceT() { return raceT; }, get gangs() { return gangs; },
-    get bikers() { return bikers; }, get bikes() { return bikes; }, get debris() { return debris; }, get player() { return player; }, explode: (x, y) => explode(x, y, null) };
+    get bikers() { return bikers; }, get bikes() { return bikes; }, get debris() { return debris; }, get player() { return player; }, get net() { return NET; }, explode: (x, y) => explode(x, y, null) };
   const resetWeapons = () => { rockets = []; drums = []; fires = []; gangs = []; bikers = []; bikes = []; debris = []; gangDone = false; };
 
   function nearest(x, y, i0, w) {
@@ -461,7 +491,7 @@ tr.me td{color:var(--haz);font-weight:700}
 
   function makeCar(d, cfg, idx, lat) {
     const p = track.pts[idx];
-    return { name: d.name, color: d.color, accent: d.accent, isPlayer: d === ME,
+    return { name: d.name, color: d.color, accent: d.accent, isPlayer: d === ME, human: d === ME, pid: d === ME ? 0 : -1, remote: false, kx: 0, ky: 0, v0x: 0, v0y: 0,
       x: p.x + p.nx * lat, y: p.y + p.ny * lat, a: p.a, vx: 0, vy: 0, fwd: 0, lat: 0,
       idx, lap: idx > track.N / 2 ? -1 : 0, finished: false, dead: false, deadT: 0,
       hp: cfg.hp, eng: cfg.eng, tire: cfg.tire, armor: cfg.armor, gun: cfg.gun, ammo: cfg.ammo, mines: cfg.mines,
@@ -519,6 +549,7 @@ tr.me td{color:var(--haz);font-weight:700}
   }
 
   function burst(x, y, n, kind) {
+    if (NET.role === 'host') NET.ev(['P', Math.round(x), Math.round(y), Math.round(n), kind]);
     if (kind === 'gib' && !gore) kind = 'dust';
     for (let i = 0; i < n; i++) {
       const a = rand(0, 6.28), s = kind === 'smoke' ? rand(10, 50) : kind === 'fire' ? rand(40, 200) : rand(60, 320);
@@ -529,6 +560,7 @@ tr.me td{color:var(--haz);font-weight:700}
   }
 
   function bloodSplat(x, y, dir, n) {
+    if (NET.role === 'host') NET.ev(['B', Math.round(x), Math.round(y), +dir.toFixed(2), n]);
     if (!gore) return;
     for (let i = 0; i < n; i++) {
       const d = rand(0, 26), a = dir + rand(-0.7, 0.7);
@@ -538,11 +570,28 @@ tr.me td{color:var(--haz);font-weight:700}
     dctx.fillStyle = 'rgba(90,6,6,.85)'; dctx.beginPath(); dctx.ellipse(x, y, 7, 4, dir, 0, 7); dctx.fill();
   }
 
-  function msg(text, color = INK) { msgs.push({ text, color, t: 1.8 }); if (msgs.length > 3) msgs.shift(); }
+  function msg(text, color = INK, local) { msgs.push({ text, color, t: 1.8 }); if (msgs.length > 3) msgs.shift(); if (!local) NET.ev(['M', text, color]); }
+  // personal message / sound for one human: shown here if it's us, sent to that guest otherwise
+  function pmsg(c, text, color) { if (c.isPlayer) msg(text, color, true); else if (c.remote) NET.to(c.pid, ['M', text, color]); }
+  function psfx(c, name) { if (c.isPlayer) sfx[name](); else if (c.remote) NET.to(c.pid, ['s', name, 1]); }
+  function addFloat(o) { floats.push(o); NET.ev(['F', Math.round(o.x), Math.round(o.y), o.text, o.color || BLOOD]); }
+  const wreckText = (c, killer) => killer ? (killer.isPlayer ? 'YOU' : killer.name.toUpperCase()) + ' WRECKED ' + c.name.toUpperCase() : c.name.toUpperCase() + ' IS WRECKED';
+  // scorch marks always show; goreSpot only with blood on. Both are forwarded so guests apply their own blood setting.
+  function scorch(x, y, rx, ry, rot, col) {
+    NET.ev(['D', Math.round(x), Math.round(y), rx, ry, +rot.toFixed(2), col]);
+    dctx.fillStyle = col; dctx.beginPath(); dctx.ellipse(x, y, rx, ry, rot, 0, 7); dctx.fill();
+  }
+  function goreSpot(x, y, rx, ry, rot, col, send = true) {
+    if (send) NET.ev(['G', Math.round(x), Math.round(y), rx, ry, +rot.toFixed(2), col]);
+    if (!gore) return;
+    dctx.fillStyle = col; dctx.beginPath(); dctx.ellipse(x, y, rx, ry, rot, 0, 7); dctx.fill();
+  }
 
   function hurt(c, amt, by) {
-    if (c.dead || c.finished && !c.isPlayer && state === 'ending') return;
-    if (by && !by.isPlayer && !c.isPlayer) amt *= 0.4; // rivals mostly gang up on you, not each other
+    // guests only measure their own wall hits and report them; the host applies all damage
+    if (NET.role === 'guest') { if (c === player && !by && !c.dead) NET.wallDmg += amt; return; }
+    if (c.dead || c.finished && !c.human && state === 'ending') return;
+    if (by && !by.human && !c.human) amt *= 0.4; // rivals mostly gang up on you, not each other
     c.hp -= amt * (1 - c.armor * 0.12) * c.tough; c.flash = 0.08;
     if (by && by !== c) { c.lastHit = by; c.lastHitT = raceT; }
     if (c.hp <= 0) wreck(c);
@@ -550,16 +599,17 @@ tr.me td{color:var(--haz);font-weight:700}
   function wreck(c) {
     c.hp = 0; c.dead = true; c.deadT = raceT;
     burst(c.x, c.y, 30, 'fire'); burst(c.x, c.y, 18, 'smoke'); burst(c.x, c.y, 16, 'spark');
-    dctx.fillStyle = 'rgba(10,8,6,.55)'; dctx.beginPath(); dctx.arc(c.x, c.y, 34, 0, 7); dctx.fill();
+    scorch(c.x, c.y, 34, 34, 0, 'rgba(10,8,6,.55)');
     sfx.boom(near(c.x, c.y)); shake = Math.max(shake, 14 * near(c.x, c.y));
     const killer = c.lastHit && raceT - c.lastHitT < 5 ? c.lastHit : null;
     if (killer) killer.kills++;
-    if (c.isPlayer) msg('YOU ARE WRECKED', BLOOD);
-    else msg(killer ? `${killer.name === 'You' ? 'YOU' : killer.name.toUpperCase()} WRECKED ${c.name.toUpperCase()}` : `${c.name.toUpperCase()} IS WRECKED`, killer && killer.isPlayer ? HAZ : INK);
+    if (c.human) pmsg(c, 'YOU ARE WRECKED', BLOOD);
+    if (!c.isPlayer) msg(wreckText(c, killer), killer && killer.isPlayer ? HAZ : INK, true);
+    NET.ev(['W', cars.indexOf(c), killer ? cars.indexOf(killer) : -1]);
   }
   function explode(x, y, by, power = 1) {
     burst(x, y, 22 * power, 'fire'); burst(x, y, 12, 'smoke'); burst(x, y, 10, 'spark');
-    dctx.fillStyle = 'rgba(15,12,10,.5)'; dctx.beginPath(); dctx.arc(x, y, 24 * power, 0, 7); dctx.fill();
+    scorch(x, y, 24 * power, 24 * power, 0, 'rgba(15,12,10,.5)');
     sfx.boom(near(x, y) * 0.8); shake = Math.max(shake, 10 * power * near(x, y));
     const R = 80 * power;
     for (const c of cars) { const d = hyp(c.x - x, c.y - y); if (d < R && !c.dead) { hurt(c, 20 * power * (1 - d / (R * 1.25)), by); const k = 260 * (1 - d / R); c.vx += (c.x - x) / (d || 1) * k; c.vy += (c.y - y) / (d || 1) * k; } }
@@ -569,21 +619,21 @@ tr.me td{color:var(--haz);font-weight:700}
   }
   function ignite(c, by, t) {
     if (c.dead) return;
-    if (c.isPlayer && c.burnT <= 0) msg('YOU ARE ON FIRE', '#ff8a1f');
+    if (c.human && c.burnT <= 0) pmsg(c, 'YOU ARE ON FIRE', '#ff8a1f');
     c.burnT = Math.max(c.burnT, t); if (by && by !== c) c.burnBy = by;
   }
   function burnPed(i, by) {
     const p = peds[i];
-    dctx.fillStyle = 'rgba(22,16,12,.85)'; dctx.beginPath(); dctx.ellipse(p.x, p.y, 7, 5, rand(0, 3), 0, 7); dctx.fill();
-    if (gore) { dctx.fillStyle = 'rgba(110,10,6,.6)'; dctx.beginPath(); dctx.arc(p.x + rand(-3, 3), p.y + rand(-3, 3), 3, 0, 7); dctx.fill(); }
+    scorch(p.x, p.y, 7, 5, rand(0, 3), 'rgba(22,16,12,.85)');
+    goreSpot(p.x + rand(-3, 3), p.y + rand(-3, 3), 3, 3, 0, 'rgba(110,10,6,.6)');
     burst(p.x, p.y, 8, 'fire'); burst(p.x, p.y, 4, 'smoke');
     yelp(near(p.x, p.y));
-    if (by && by.isPlayer) floats.push({ x: p.x, y: p.y - 12, text: pick(['TOASTED', 'WELL DONE', 'CRISPY', 'FLAMBÉ']), life: 1, color: '#ff8a1f' });
+    if (by && by.human) addFloat({ x: p.x, y: p.y - 12, text: pick(['TOASTED', 'WELL DONE', 'CRISPY', 'FLAMBÉ']), life: 1, color: '#ff8a1f' });
     peds.splice(i, 1);
   }
   function drumBoom(d) {
     explode(d.x, d.y, d.owner, 1.1);
-    dctx.fillStyle = 'rgba(12,10,8,.6)'; dctx.beginPath(); dctx.ellipse(d.x, d.y, 52, 40, rand(0, 3), 0, 7); dctx.fill();
+    scorch(d.x, d.y, 52, 40, rand(0, 3), 'rgba(12,10,8,.6)');
     fires.push({ x: d.x, y: d.y, r: 52, t: 6, max: 6, owner: d.owner });
   }
 
@@ -621,7 +671,7 @@ tr.me td{color:var(--haz);font-weight:700}
         const dx = m.x - c.x, dy = m.y - c.y;
         if (!m.wrecked && m.fuse < 0 && hyp(dx, dy) < 140 && Math.abs(wrap(Math.atan2(dy, dx) - c.a)) < 0.4) { m.fuse = rand(0.8, 1.6); m.by = c; }
       }
-      if (c.flameSnd <= 0) { sfx.flame(c.isPlayer ? 1 : near(c.x, c.y)); c.flameSnd = 0.12; }
+      if (c.flameSnd <= 0) { sfx.flame(nearCar(c)); c.flameSnd = 0.12; }
       return;
     }
     if (c.spCd > 0) return;
@@ -631,12 +681,12 @@ tr.me td{color:var(--haz);font-weight:700}
       rockets.push({ kind: type, x: c.x + ca * 24, y: c.y + sa * 24, a: c.a, sp, vx: c.vx * 0.5 + ca * sp, vy: c.vy * 0.5 + sa * sp,
         owner: c, idx: c.idx, life: type === 'rocket' ? 1.6 : 4, target: null });
       c.spCd = type === 'rocket' ? 0.45 : 0.7;
-      sfx.launch(c.isPlayer ? 1 : near(c.x, c.y));
+      sfx.launch(nearCar(c));
     } else if (type === 'drum') {
       drums.push({ x: c.x - ca * 28, y: c.y - sa * 28, vx: c.vx * 0.25, vy: c.vy * 0.25, a: rand(0, 6.28), owner: c, fuse: 6, arm: 0.5 });
       c.spCd = 0.7; sfx.mine();
     }
-    if (c.isPlayer && c.sp[type] <= 0) cycleSpecial(c);
+    if (c.human && c.sp[type] <= 0) cycleSpecial(c);
   }
 
   // ---------- Final lap: the Iron Vultures park their bikes across the track ----------
@@ -670,7 +720,6 @@ tr.me td{color:var(--haz);font-weight:700}
 
   // shared physics for flying bodies, limbs and bikes: gravity, bounce, slide, spin, walls
   function phys(o, dt, fric, bleed) {
-    bleed = bleed && gore;
     if (o.z > 0 || o.vz > 0) {
       o.vz -= 900 * dt; o.z += o.vz * dt;
       if (o.z <= 0) {
@@ -683,8 +732,8 @@ tr.me td{color:var(--haz);font-weight:700}
     if (ground) { const f = Math.pow(fric, dt); o.vx *= f; o.vy *= f; o.spin *= Math.pow(0.12, dt); }
     o.x += o.vx * dt; o.y += o.vy * dt; o.a += o.spin * dt;
     const sp = hyp(o.vx, o.vy);
-    if (bleed && ground && sp > 25) { dctx.fillStyle = `rgba(125,8,6,${clamp(sp / 350, 0.2, 0.7)})`; dctx.fillRect(o.x - 2.5, o.y - 2.5, 5, 5); }
-    if (bleed && ground && sp < 6 && !o.pooled) { o.pooled = true; dctx.fillStyle = 'rgba(105,6,4,.75)'; dctx.beginPath(); dctx.ellipse(o.x, o.y, rand(9, 15), rand(6, 10), rand(0, 3), 0, 7); dctx.fill(); }
+    if (bleed && ground && sp > 25) goreSpot(o.x, o.y, 2.8, 2.8, 0, `rgba(125,8,6,${clamp(sp / 350, 0.2, 0.7).toFixed(2)})`, (o.tc = (o.tc || 0) + 1) % 3 === 0);
+    if (bleed && ground && sp < 6 && !o.pooled) { o.pooled = true; goreSpot(o.x, o.y, rand(9, 15), rand(6, 10), rand(0, 3), 'rgba(105,6,4,.75)'); }
     if (sp > 60) o.pooled = false;
     o.idx = nearest(o.x, o.y, o.idx, 14);
     const q = track.pts[o.idx], dx = o.x - q.x, dy = o.y - q.y, d = hyp(dx, dy);
@@ -701,11 +750,11 @@ tr.me td{color:var(--haz);font-weight:700}
     if (how === 'char') { b.charred = true; burst(b.x, b.y, 10, 'fire'); burst(b.x, b.y, 6, 'smoke'); }
     else { bloodSplat(b.x, b.y, dir, 26); burst(b.x, b.y, 18, 'gib'); }
     yelp(near(b.x, b.y));
-    if (by && by.isPlayer) {
-      career.cash += 50;
+    if (by && by.human) {
+      if (by.isPlayer && !NET.role) career.cash += 50;
       if (raceT - (killBiker.lastT || -9) < 0.35) return; // one callout at a time when a whole gang goes up
       killBiker.lastT = raceT;
-      floats.push({ x: b.x, y: b.y - 14, text: !gore ? pick(['KNOCKED OUT', 'BONK', 'WIPEOUT', 'NIGHTY NIGHT']) : how === 'char' ? pick(['BIKER BBQ', 'CHARGRILLED']) : how === 'blast' ? pick(['AIRMAIL', 'SPLATTERED', 'LIFTOFF']) : pick(['ROADKILL', 'HOOD ORNAMENT', 'TOLL PAID', 'SPEED BUMP']), life: 1.1, color: BLOOD });
+      addFloat({ x: b.x, y: b.y - 14, text: !gore ? pick(['KNOCKED OUT', 'BONK', 'WIPEOUT', 'NIGHTY NIGHT']) : how === 'char' ? pick(['BIKER BBQ', 'CHARGRILLED']) : how === 'blast' ? pick(['AIRMAIL', 'SPLATTERED', 'LIFTOFF']) : pick(['ROADKILL', 'HOOD ORNAMENT', 'TOLL PAID', 'SPEED BUMP']), life: 1.1, color: BLOOD });
     }
   }
   // blown to pieces: the body is replaced by flying limbs, a head and a lot of red
@@ -809,7 +858,7 @@ tr.me td{color:var(--haz);font-weight:700}
     const p = peds[i];
     bloodSplat(p.x, p.y, dir, 16); burst(p.x, p.y, 10, 'gib');
     yelp(near(p.x, p.y));
-    if (car) { car.bloodT = 2.2; if (car.isPlayer) floats.push({ x: p.x, y: p.y - 12, text: gore ? pick(['SPLAT', 'SQUISH', 'OOPS', 'ROADKILL']) : pick(['BONK', 'OOF', 'WHOOPS', 'POOF']), life: 1, color: gore ? BLOOD : HAZ }); }
+    if (car) { car.bloodT = 2.2; if (car.human) addFloat({ x: p.x, y: p.y - 12, text: gore ? pick(['SPLAT', 'SQUISH', 'OOPS', 'ROADKILL']) : pick(['BONK', 'OOF', 'WHOOPS', 'POOF']), life: 1, color: gore ? BLOOD : HAZ }); }
     peds.splice(i, 1);
   }
 
@@ -817,14 +866,15 @@ tr.me td{color:var(--haz);font-weight:700}
     if (c.fireCd > 0 || c.ammo <= 0) return;
     c.fireCd = (0.1 - c.gun * 0.016) * c.fireMul; c.ammo--; c.muzzle = 0.05;
     const a = c.a + rand(-0.035, 0.035), ca = Math.cos(c.a), sa = Math.sin(c.a);
-    bullets.push({ x: c.x + ca * 22, y: c.y + sa * 22, vx: c.vx + Math.cos(a) * 980, vy: c.vy + Math.sin(a) * 980, life: 0.55, owner: c, idx: c.idx, dmg: 1.3 + c.gun * 0.6 });
-    if (c.sndCd <= 0) { sfx.gun(c.isPlayer ? 1 : near(c.x, c.y) * 0.7); c.sndCd = 0.07; }
+    const bl = { x: c.x + ca * 22, y: c.y + sa * 22, vx: c.vx + Math.cos(a) * 980, vy: c.vy + Math.sin(a) * 980, life: 0.55, owner: c, idx: c.idx, dmg: 1.3 + c.gun * 0.6 };
+    bullets.push(bl); NET.ev(['b', Math.round(bl.x), Math.round(bl.y), Math.round(bl.vx), Math.round(bl.vy)]);
+    if (c.sndCd <= 0) { sfx.gun(c.isPlayer ? nearCar(c) : nearCar(c, 0.7)); c.sndCd = 0.07; }
   }
   function dropMine(c) {
     if (c.mineCd > 0 || c.mines <= 0) return;
     c.mineCd = 0.6; c.mines--;
     mines.push({ x: c.x - Math.cos(c.a) * 26, y: c.y - Math.sin(c.a) * 26, owner: c, arm: 0.7, t: 0 });
-    if (c.isPlayer) sfx.mine();
+    if (c.human) psfx(c, 'mine');
   }
 
   // ================= AI =================
@@ -859,12 +909,12 @@ tr.me td{color:var(--haz);font-weight:700}
     // most of the time rivals leave each other alone and race; now and then one picks a fight
     if (ai.rivalT < 0) { ai.rivalOk = Math.random() < D.infight; ai.rivalT = rand(3, 7); }
     for (const o of cars) {
-      if (o === c || o.dead || !(o.isPlayer || ai.rivalOk)) continue;
+      if (o === c || o.dead || !(o.human || ai.rivalOk)) continue;
       const dx = o.x - c.x, dy = o.y - c.y, d = hyp(dx, dy);
       // aim where the target will be when the bullets arrive
       const t = d / 980 * D.lead, ax = dx + o.vx * t, ay = dy + o.vy * t;
       const off = Math.abs(wrap(Math.atan2(ay, ax) - c.a));
-      const want = off - (o.isPlayer ? D.focus * 0.2 : 0);
+      const want = off - (o.human ? D.focus * 0.2 : 0);
       if (d < D.range && off < D.aim) inSights = true;
       if (D.hunt && d < D.range && want < huntA) { hunt = Math.atan2(ay, ax); huntA = want; }
       if (d < 650 && off < 0.12) front = true;
@@ -889,8 +939,9 @@ tr.me td{color:var(--haz);font-weight:700}
       if (ai.stuck > 1.0) { ai.rev = rand(0.5, 0.8); ai.revSteer = -(Math.sign(diff) || 1); ai.stuck = 0; }
     } else ai.stuck = 0;
     // light rubber band so races stay close
-    if (!c.isPlayer && player && !player.dead) {
-      const gap = (prog(c) - prog(player)) / N;
+    const hum = cars.filter(o => o.human && !o.dead);
+    if (!c.human && hum.length) {
+      const gap = (prog(c) - Math.max(...hum.map(prog))) / N;
       c.rb = gap > 0 ? 1 - (1 - D.rb[0]) * clamp((gap - 0.08) / 0.25, 0, 1) : 1 + (D.rb[1] - 1) * clamp((-gap - 0.15) / 0.3, 0, 1);
     } else c.rb = 1;
     return ctl;
@@ -929,7 +980,7 @@ tr.me td{color:var(--haz);font-weight:700}
     const p = track.pts[c.idx], dx = c.x - p.x, dy = c.y - p.y, d = hyp(dx, dy);
     c.offroad = d > HALF + 6;
     const lim = WALL - rad;
-    if (d > lim) {
+    if (d > lim && !c.remote) {
       const nx = dx / d, ny = dy / d;
       c.x = p.x + nx * lim; c.y = p.y + ny * lim;
       const vn = c.vx * nx + c.vy * ny;
@@ -938,6 +989,7 @@ tr.me td{color:var(--haz);font-weight:700}
         if (vn > 140) { hurt(c, (vn - 140) * 0.06, c.lastHit && raceT - c.lastHitT < 3 ? c.lastHit : null); sfx.crash(near(c.x, c.y) * clamp(vn / 400, 0.3, 1)); burst(c.x + nx * 14, c.y + ny * 14, 6, 'spark'); if (c.isPlayer) shake = Math.max(shake, vn / 60); }
       }
     }
+    if (NET.role === 'guest') return;
     if (prev > N * 0.75 && c.idx < N * 0.25) onLap(c);
     else if (prev < N * 0.25 && c.idx > N * 0.75) c.lap--;
   }
@@ -947,9 +999,9 @@ tr.me td{color:var(--haz);font-weight:700}
     if (c.lap === LAPS - 1 && !gangDone && !c.dead) spawnGang();
     if (c.lap >= LAPS && !c.finished && !c.dead) {
       c.finished = true; finishOrder.push(c);
-      if (c.isPlayer) { const pos = finishOrder.length; msg(pos === 1 ? 'YOU WIN!' : `FINISHED ${ordinal(pos)}`, HAZ); sfx.lap(); }
+      if (c.human) { const pos = finishOrder.length; pmsg(c, pos === 1 ? 'YOU WIN!' : `FINISHED ${ordinal(pos)}`, HAZ); psfx(c, 'lap'); }
       else if (finishOrder.length === 1) msg(`${c.name.toUpperCase()} TAKES THE FLAG`);
-    } else if (c.isPlayer && c.lap >= 1 && c.lap < LAPS) { msg(c.lap === LAPS - 1 ? 'FINAL LAP' : `LAP ${c.lap + 1}`, HAZ); sfx.lap(); }
+    } else if (c.human && c.lap >= 1 && c.lap < LAPS) { pmsg(c, c.lap === LAPS - 1 ? 'FINAL LAP' : `LAP ${c.lap + 1}`, HAZ); psfx(c, 'lap'); }
   }
   const ordinal = n => n + (['th', 'st', 'nd', 'rd'][n] || 'th');
 
@@ -984,6 +1036,7 @@ tr.me td{color:var(--haz);font-weight:700}
         trackClamp(c, 14);
         continue;
       }
+      if (c.remote) { remoteCar(c, dt, live); continue; }
       let ctl;
       if (!live) ctl = { thr: 0, steer: 0 };
       else if (c.isPlayer && !c.finished) ctl = {
@@ -1141,23 +1194,39 @@ tr.me td{color:var(--haz);font-weight:700}
         k.active = false; k.t = 12;
         if (k.type === 'R') c.hp = Math.min(100, c.hp + 30);
         if (k.type === 'A') c.ammo = Math.min(MAX_AMMO, c.ammo + 40);
-        if (k.type === 'N') c.turbo = Math.min(100, c.turbo + 50);
+        if (k.type === 'N') { if (c.remote) NET.to(c.pid, ['N', 50]); else c.turbo = Math.min(100, c.turbo + 50); }
         let spText = '';
         if (k.type === 'S') {
           const t = pick(SP_ORDER), add = { rocket: 2, seeker: 1, flame: 40, drum: 1 }[t];
           c.sp[t] = Math.min(SPECIALS[t].max, c.sp[t] + add);
           spText = `${SPECIALS[t].hud} +${add}`;
-          if (c.isPlayer && !(c.sp[SP_ORDER[c.spSel]] > 0)) c.spSel = SP_ORDER.indexOf(t);
+          if (c.human && !(c.sp[SP_ORDER[c.spSel]] > 0)) c.spSel = SP_ORDER.indexOf(t);
         }
-        if (c.isPlayer) {
-          if (k.type === '$') career.cash += 150;
-          sfx.pickup();
-          floats.push({ x: k.x, y: k.y - 14, text: { $: '+$150', R: 'REPAIR +30', A: 'AMMO +40', N: 'NITRO +50', S: spText }[k.type], life: 1, color: HAZ });
+        if (c.human) {
+          if (k.type === '$' && c.isPlayer && !NET.role) career.cash += 150;
+          psfx(c, 'pickup');
+          addFloat({ x: k.x, y: k.y - 14, text: { $: '+$150', R: 'REPAIR +30', A: 'AMMO +40', N: 'NITRO +50', S: spText }[k.type], life: 1, color: HAZ });
         }
         break;
       }
     }
 
+    // any knock the host gave a guest's car this frame goes back to that guest as a kick
+    for (const c of cars) if (c.remote && !c.dead) { const dx = c.vx - c.v0x, dy = c.vy - c.v0y; if (Math.abs(dx) + Math.abs(dy) > 2) { c.kx += dx; c.ky += dy; } }
+    tickCosmetics(dt);
+
+    // camera
+    const tx = player.x + player.vx * 0.32, ty = player.y + player.vy * 0.32;
+    cam.x += (tx - cam.x) * Math.min(1, dt * 5); cam.y += (ty - cam.y) * Math.min(1, dt * 5);
+    shake = Math.max(0, shake - dt * 30);
+
+    // single player ends when you finish or wreck; online when every human has
+    const done = NET.role ? cars.filter(c => c.human).every(c => c.finished || c.dead) : player.finished || player.dead;
+    if (state === 'race' && done) { state = 'ending'; endT = player.dead && !NET.role ? 2.6 : 3; }
+    if (state === 'ending') { endT -= dt; if (endT <= 0) { if (NET.role) netEndRace(); else endRace(); } }
+  }
+
+  function tickCosmetics(dt) {
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt;
       const fr = p.kind === 'smoke' ? 0.4 : 0.05; p.vx *= Math.pow(fr, dt); p.vy *= Math.pow(fr, dt);
@@ -1166,14 +1235,6 @@ tr.me td{color:var(--haz);font-weight:700}
     }
     for (let i = floats.length - 1; i >= 0; i--) { const f = floats[i]; f.y -= 28 * dt; f.life -= dt; if (f.life <= 0) floats.splice(i, 1); }
     for (let i = msgs.length - 1; i >= 0; i--) { msgs[i].t -= dt; if (msgs[i].t <= 0) msgs.splice(i, 1); }
-
-    // camera
-    const tx = player.x + player.vx * 0.32, ty = player.y + player.vy * 0.32;
-    cam.x += (tx - cam.x) * Math.min(1, dt * 5); cam.y += (ty - cam.y) * Math.min(1, dt * 5);
-    shake = Math.max(0, shake - dt * 30);
-
-    if (state === 'race' && (player.finished || player.dead)) { state = 'ending'; endT = player.dead ? 2.6 : 3; }
-    if (state === 'ending') { endT -= dt; if (endT <= 0) endRace(); }
   }
 
   function updateAudio() {
@@ -1352,7 +1413,7 @@ tr.me td{color:var(--haz);font-weight:700}
     for (const c of cars) if (!c.isPlayer && !c.dead && inView(c.x, c.y)) { ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(c.name, c.x + 1, c.y - 23); ctx.fillStyle = '#fff'; ctx.fillText(c.name, c.x, c.y - 24); }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (state !== 'title' && state !== 'credits') drawHud();
+    if (state !== 'title' && state !== 'credits' && state !== 'lobby') drawHud();
   }
 
   function bar(x, y, w, h, f, col, label) {
@@ -1376,7 +1437,7 @@ tr.me td{color:var(--haz);font-weight:700}
     ctx.font = '700 12px "Chakra Petch", sans-serif'; ctx.fillStyle = '#b9b6ae';
     const t = raceT, mm = Math.floor(t / 60), ss = (t % 60).toFixed(1).padStart(4, '0');
     ctx.fillText(`${mm}:${ss}`, 22, 80);
-    ctx.fillStyle = HAZ; ctx.fillText(money(career.cash), 122, 80);
+    if (!NET.role) { ctx.fillStyle = HAZ; ctx.fillText(money(career.cash), 122, 80); }
 
     const y0 = VH - 76;
     ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(12, y0 - 18, 230, 82);
@@ -1428,7 +1489,7 @@ tr.me td{color:var(--haz);font-weight:700}
         ctx.fillStyle = lit === 4 ? '#3ce060' : i < lit ? '#ff2a2a' : '#331010';
         ctx.beginPath(); ctx.arc(cx + 10 + i * 56, 95, 16, 0, 7); ctx.fill();
       }
-      if (state === 'count') { ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.font = '22px "Black Ops One", Impact, sans-serif'; ctx.fillText(track.T.name.toUpperCase() + ` · RACE ${career.race + 1} OF ${RACES}`, VW / 2, 160); }
+      if (state === 'count') { ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.font = '22px "Black Ops One", Impact, sans-serif'; ctx.fillText(track.T.name.toUpperCase() + (NET.role ? ' · ONLINE RACE' : ` · RACE ${career.race + 1} OF ${RACES}`), VW / 2, 160); }
     }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     msgs.forEach((m, i) => {
@@ -1464,6 +1525,7 @@ tr.me td{color:var(--haz);font-weight:700}
       <div class="row">
         <button class="go" data-act="new">New championship</button>
         ${s ? `<button data-act="continue">Continue · race ${Math.min(s.race + 1, RACES)} of ${RACES} · ${(DIFF[s.diff] || DIFF.normal).label}</button>` : ''}
+        <button data-act="net:menu">Online race</button>
         <button data-act="credits">Credits</button>
       </div>
       <div class="keys">
@@ -1601,6 +1663,7 @@ tr.me td{color:var(--haz);font-weight:700}
 
   let pausedFrom = null;
   function togglePause() {
+    if (NET.role) return; // a shared race can't be paused by one player
     if (state === 'race' || state === 'count' || state === 'ending') {
       pausedFrom = state; state = 'paused';
       showPanel(`<div class="stack" style="align-items:flex-start"><h2>PAUSED</h2><div class="row"><button class="go" data-act="resume">Resume</button><button data-act="quit">Quit race (counts as wrecked)</button></div></div>`);
@@ -1624,6 +1687,7 @@ tr.me td{color:var(--haz);font-weight:700}
     else if (act === 'garage') garage();
     else if (act === 'champ') champScreen();
     else if (act === 'credits') creditsScreen();
+    else if (act.startsWith('net:')) netAction(act);
     else if (act.startsWith('diff:')) {
       const key = act.slice(5);
       if (DIFF[key]) {
@@ -1640,9 +1704,519 @@ tr.me td{color:var(--haz);font-weight:700}
     else if (act === 'mines') { if (k.cash >= 300) { k.cash -= 300; k.mines = Math.min(MAX_MINES, k.mines + 3); } garage(); }
   });
 
+  // ================= online multiplayer =================
+  // How it works:
+  // - Matchmaking: browsers swap WebRTC connection offers through a free public MQTT relay, keyed by a room code.
+  //   Nothing else goes through the relay; the race runs browser to browser over WebRTC data channels.
+  // - The host runs the real race (rivals, damage, weapons, bikers, laps) and sends a snapshot 20 times a second
+  //   plus a reliable stream of effects (blood, explosions, sounds with positions, messages).
+  // - Each guest drives its own car locally so steering has no lag, reports its position 30 times a second,
+  //   and gets "kicks" back when the host knocks its car around.
+  const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+  const ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+  const HUMAN_COLORS = [[HAZ, '#151515'], ['#4de8ff', '#0b2a33'], ['#ff5ad1', '#2a0b22'], ['#f2f2f2', '#c8161d']];
+  const CODE_ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const ONLINE_CAR = { eng: 2, tire: 2, armor: 1, gun: 1 };
+  const BIKER_ST = ['alive', 'burning', 'dead'], HEADS = ['bald', 'bandana', 'helmet'], DEBRIS = ['head', 'arm', 'leg', 'torso'];
+  let netName = '';
+  try { netName = localStorage.getItem('carnage-circuit-name') || ''; } catch (_) {}
+  const esc = t => String(t).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const cleanName = t => String(t || '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 14);
+  const r0 = v => Math.round(v), r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
+
+  function send(ch, obj) { if (ch && ch.readyState === 'open' && ch.bufferedAmount < 256e3) ch.send(typeof obj === 'string' ? obj : JSON.stringify(obj)); }
+  function netSendHost(obj) { if (NET.host) send(NET.host.rel, obj); }
+  function netBroadcast(obj) { const s = JSON.stringify(obj); for (const p of NET.peers.values()) if (p.open) send(p.rel, s); }
+
+  function loadMqtt() {
+    if (window.mqtt) return Promise.resolve();
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js';
+      s.onload = () => res(); s.onerror = () => rej(new Error('Could not load the matchmaking library. Check your internet connection.'));
+      document.head.appendChild(s);
+    });
+  }
+  // The free public relays sometimes ignore a connection attempt, so try each one a few times,
+  // and use every relay that answers: host and guests both listen and talk on all of them.
+  function relayOnce(url) {
+    return new Promise((res, rej) => {
+      const c = window.mqtt.connect(url, { connectTimeout: 4500, reconnectPeriod: 0, clean: true, clientId: 'cc_' + Math.random().toString(36).slice(2, 12) });
+      const to = setTimeout(() => { c.end(true); rej(new Error('timeout')); }, 5000);
+      c.once('connect', () => { clearTimeout(to); c.removeAllListeners('error'); c.on('error', () => {}); res(c); });
+      c.once('error', err => { clearTimeout(to); c.end(true); rej(err); });
+    });
+  }
+  async function relay(url) {
+    for (let attempt = 0; attempt < 3; attempt++) { try { return await relayOnce(url); } catch (_) { /* retry */ } }
+    return null;
+  }
+  async function brokerConnectAll() {
+    await loadMqtt();
+    const clients = (await Promise.all(BROKERS.map(relay))).filter(Boolean);
+    if (!clients.length) throw new Error('Could not reach any matchmaking relay. Check your internet connection and try again.');
+    return clients;
+  }
+  const endRelays = () => { for (const c of NET.mq || []) { try { c.end(true); } catch (_) {} } };
+  // non-trickle ICE: wait until the offer/answer already lists every way to reach this browser
+  function iceDone(pc) {
+    return new Promise(res => {
+      if (pc.iceGatheringState === 'complete') return res();
+      const t = setTimeout(res, 3000);
+      pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } });
+    });
+  }
+  function readName() { const el = $('netName'); if (el) netName = cleanName(el.value); try { localStorage.setItem('carnage-circuit-name', netName); } catch (_) {} }
+
+  function netReset() {
+    for (const p of NET.peers.values()) { try { p.pc.close(); } catch (_) {} }
+    if (NET.host) { try { NET.host.pc.close(); } catch (_) {} }
+    endRelays();
+    clearTimeout(NET.joinTimer);
+    Object.assign(NET, { role: null, live: false, mq: null, room: '', topic: '', host: null, myPid: 0, lobby: [], inputs: {}, evq: [], pq: {}, wallDmg: 0, status: '' });
+    NET.peers = new Map();
+  }
+  function netLeave() {
+    if (NET.role === 'host') netBroadcast({ t: 'bye' });
+    netReset(); attract(); titleScreen();
+  }
+
+  // ---------- host ----------
+  async function netHost() {
+    readName();
+    netReset();
+    NET.role = 'host'; NET.myPid = 0; NET.track = 0;
+    NET.lobby = [{ pid: 0, name: netName || 'Host' }];
+    NET.status = 'Opening a room…'; onlineScreen('hosting');
+    try {
+      const clients = await brokerConnectAll();
+      if (NET.role !== 'host') { for (const c of clients) c.end(true); return; }
+      let code = ''; for (let i = 0; i < 5; i++) code += CODE_ABC[Math.floor(Math.random() * CODE_ABC.length)];
+      NET.mq = clients; NET.room = code;
+      NET.topic = 'carnage-circuit/v1/' + NET.room;
+      for (const cl of clients) {
+        cl.subscribe(NET.topic + '/host', { qos: 1 });
+        cl.on('message', (t, m) => { let d; try { d = JSON.parse(m.toString()); } catch (_) { return; } hostSignal(d, cl); });
+      }
+      NET.status = 'Send the room code to your friends. Up to 3 can join.';
+    } catch (e) { netReset(); NET.status = ''; onlineScreen('menu', e.message); return; }
+    if (state === 'lobby' && NET.view === 'hosting') onlineScreen('hosting');
+  }
+  function toGuest(cl, id, obj) { cl.publish(NET.topic + '/g/' + id, JSON.stringify(obj), { qos: 1 }); }
+  async function hostSignal(d, cl) {
+    if (d.t === 'join' && d.id) {
+      if ([...NET.peers.values()].some(p => p.id === d.id)) return; // same guest heard on another relay
+      if (state !== 'lobby') return toGuest(cl, d.id, { t: 'refuse', why: 'That race has already started. Ask the host to open the lobby again.' });
+      const pid = [1, 2, 3].find(p => !NET.peers.has(p));
+      if (!pid) return toGuest(cl, d.id, { t: 'refuse', why: 'That room is full.' });
+      const pc = new RTCPeerConnection({ iceServers: ICE });
+      const peer = { pc, pid, id: d.id, name: cleanName(d.name) || 'Player ' + (pid + 1), open: false,
+        rel: pc.createDataChannel('rel', { ordered: true }), fast: pc.createDataChannel('fast', { ordered: false, maxRetransmits: 0 }) };
+      NET.peers.set(pid, peer);
+      wirePeer(peer);
+      await pc.setLocalDescription(await pc.createOffer());
+      await iceDone(pc);
+      toGuest(cl, d.id, { t: 'offer', sdp: pc.localDescription.sdp, pid });
+    } else if (d.t === 'answer') {
+      const peer = [...NET.peers.values()].find(p => p.id === d.id);
+      if (peer && !peer.pc.remoteDescription) { try { await peer.pc.setRemoteDescription({ type: 'answer', sdp: d.sdp }); } catch (_) { dropPeer(peer); } }
+    }
+  }
+  function wirePeer(peer) {
+    const onMsg = e => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } hostRecv(peer, m); };
+    peer.rel.onmessage = onMsg; peer.fast.onmessage = onMsg;
+    peer.rel.onopen = () => {
+      peer.open = true;
+      if (!NET.lobby.some(p => p.pid === peer.pid)) NET.lobby.push({ pid: peer.pid, name: peer.name });
+      netLobbyBroadcast(); sfx.pickup();
+      if (state === 'lobby') onlineScreen('hosting');
+    };
+    peer.rel.onclose = () => dropPeer(peer);
+    peer.pc.onconnectionstatechange = () => { if (['failed', 'closed'].includes(peer.pc.connectionState)) dropPeer(peer); };
+    setTimeout(() => { if (!peer.open) dropPeer(peer); }, 25000);
+  }
+  function dropPeer(peer) {
+    if (NET.peers.get(peer.pid) !== peer) return;
+    NET.peers.delete(peer.pid);
+    try { peer.pc.close(); } catch (_) {}
+    if (!peer.open) return;
+    NET.lobby = NET.lobby.filter(p => p.pid !== peer.pid);
+    const car = cars.find(c => c.remote && c.pid === peer.pid);
+    if (car) { car.remote = false; car.human = false; car.name += ' (AI)'; car.prof = null; msg(peer.name.toUpperCase() + ' DISCONNECTED'); }
+    netLobbyBroadcast();
+    if (state === 'lobby') onlineScreen('hosting');
+  }
+  function netLobbyBroadcast() { netBroadcast({ t: 'lobby', players: NET.lobby, track: NET.track }); }
+  function hostRecv(peer, m) {
+    if (m.t === 'i') { m.fresh = true; NET.inputs[peer.pid] = m; }
+    else if (m.t === 'cy') { const c = cars.find(o => o.remote && o.pid === peer.pid); if (c) cycleSpecial(c); }
+  }
+
+  function netStartRace() {
+    if (NET.role !== 'host' || !NET.room) return;
+    career = { online: true, diff: pickedDiff, race: NET.track, cash: 0 };
+    track = buildTrack(NET.track);
+    decal = document.createElement('canvas'); decal.width = track.WW; decal.height = track.WH; dctx = decal.getContext('2d');
+    bullets = []; mines = []; peds = []; pickups = []; parts = []; floats = []; msgs = []; finishOrder = [];
+    resetWeapons();
+    const N = track.N, D = diffOf();
+    const grid = [[N - 14, -30], [N - 14, 30], [N - 40, -30], [N - 40, 30]];
+    const humans = NET.lobby.filter(p => p.pid === 0 || (NET.peers.get(p.pid) || {}).open);
+    const rivals = RIVALS.slice(0, 4 - humans.length);
+    const lvl = (v, max) => clamp(v + D.up, 0, max);
+    cars = rivals.map((d, i) => makeCar(d, {
+      hp: 100, eng: lvl(ONLINE_CAR.eng, 4), tire: lvl(ONLINE_CAR.tire, 4), armor: lvl(ONLINE_CAR.armor, 4), gun: lvl(ONLINE_CAR.gun, 3),
+      ammo: 90, mines: 3, spd: D.spd * (0.97 + (d.skill - 0.95) * 0.6), skill: d.skill, tough: D.tough, fireMul: D.fire, grip: D.grip,
+      line: clamp(D.lineK * (0.97 + (d.skill - 0.95) * 0.6), 0.75, 1.0),
+      sp: { rocket: D.sp * 2, seeker: D.sp, flame: D.sp * 45, drum: D.sp },
+    }, grid[i][0], grid[i][1]));
+    humans.forEach((h, j) => {
+      const [color, accent] = HUMAN_COLORS[h.pid], g = grid[rivals.length + j];
+      const c = makeCar({ name: h.name, color, accent }, { hp: 100, ...ONLINE_CAR, ammo: 120, mines: 4, spd: 1, sp: { rocket: 4, seeker: 2, flame: 100, drum: 3 } }, g[0], g[1]);
+      Object.assign(c, { human: true, pid: h.pid, isPlayer: h.pid === 0, remote: h.pid !== 0 });
+      cars.push(c);
+    });
+    player = cars.find(c => c.isPlayer);
+    for (let i = 0; i < 14; i++) spawnPed(true);
+    for (let i = 0; i < 7; i++) {
+      const idx = Math.floor((i + 0.55) * N / 7), p = track.pts[idx], lat = rand(-HALF + 18, HALF - 18);
+      pickups.push({ idx, x: p.x + p.nx * lat, y: p.y + p.ny * lat, type: pick('$RANSS'), active: true, t: 0 });
+    }
+    NET.inputs = {}; NET.evq = []; NET.pq = {}; NET.sendT = 0; NET.live = true;
+    netBroadcast({ t: 'start', track: NET.track, diff: pickedDiff,
+      cars: cars.map(c => ({ name: c.name, color: c.color, accent: c.accent, human: c.human, pid: c.pid, x: r0(c.x), y: r0(c.y), a: r2(c.a), idx: c.idx, lap: c.lap,
+        eng: c.eng, tire: c.tire, armor: c.armor, gun: c.gun, spd: c.spd, grip: c.grip, line: c.line })),
+      pk: pickups.map(k => [k.idx, r0(k.x), r0(k.y), k.type]) });
+    cam.x = player.x; cam.y = player.y;
+    raceT = 0; countT = 4; lastBeep = 9; endT = 0; shake = 0; pedT = 0;
+    state = 'count';
+    showPanel(null);
+    initAudio();
+  }
+
+  // a guest's car on the host: position comes from the guest, everything else from the host's simulation
+  function remoteCar(c, dt, live) {
+    const inp = NET.inputs[c.pid];
+    if (inp && inp.fresh) {
+      inp.fresh = false;
+      c.x = inp.x; c.y = inp.y; c.a = inp.a; c.vx = inp.vx; c.vy = inp.vy; c.turbo = inp.tu;
+      if (inp.wd > 0) { hurt(c, inp.wd, c.lastHit && raceT - c.lastHitT < 3 ? c.lastHit : null); inp.wd = 0; }
+    } else { c.x += c.vx * dt; c.y += c.vy * dt; }
+    c.v0x = c.vx; c.v0y = c.vy;
+    c.fwd = c.vx * Math.cos(c.a) + c.vy * Math.sin(c.a);
+    trackClamp(c, 14);
+    const b = inp ? inp.b : 0;
+    c.turboOn = !!(b & 8);
+    if (c.turboOn && Math.random() < 0.7) parts.push({ x: c.x - Math.cos(c.a) * 20, y: c.y - Math.sin(c.a) * 20, vx: -Math.cos(c.a) * 80, vy: -Math.sin(c.a) * 80, life: 0.18, max: 0.18, kind: 'fire', size: rand(3, 6) });
+    if (live && !c.finished && !c.dead) { if (b & 1) fire(c); if (b & 2) dropMine(c); if (b & 4) useSpecial(c, SP_ORDER[c.spSel], dt); }
+    if (c.hp < 45 && Math.random() < (45 - c.hp) / 60) parts.push({ x: c.x - Math.cos(c.a) * 6, y: c.y - Math.sin(c.a) * 6, vx: rand(-10, 10), vy: rand(-10, 10), life: 1, max: 1, kind: 'smoke', size: rand(4, 8) });
+  }
+
+  function snapshot() {
+    return { t: 's', st: state, rt: r1(raceT), ct: r2(countT),
+      cs: cars.map(c => [r0(c.x), r0(c.y), r2(c.a), r0(c.vx), r0(c.vy), r1(c.hp),
+        (c.dead ? 1 : 0) | (c.finished ? 2 : 0) | (c.flameT > 0 ? 4 : 0) | (c.muzzle > 0 ? 8 : 0) | (c.turboOn ? 16 : 0) | (c.bloodT > 0 ? 32 : 0) | (c.flash > 0 ? 64 : 0),
+        c.lap, c.idx, r0(c.turbo), c.ammo, c.mines, r0(c.sp.rocket), r0(c.sp.seeker), r0(c.sp.flame), r0(c.sp.drum), c.spSel, c.kills, r1(c.burnT), r1(c.deadT)]),
+      fo: finishOrder.map(c => cars.indexOf(c)),
+      rk: rockets.map(o => [r0(o.x), r0(o.y), r2(o.a), o.kind === 'seeker' ? 1 : 0]),
+      mn: mines.map(m => [r0(m.x), r0(m.y), r1(m.arm), r1(m.t)]),
+      dr: drums.map(d => [r0(d.x), r0(d.y), r1(d.fuse)]),
+      fi: fires.map(f => [r0(f.x), r0(f.y), f.r, r1(f.t), f.max]),
+      pk: pickups.map(k => k.active ? k.type : 0),
+      pd: peds.map(p => [r0(p.x), r0(p.y), r2(p.dir), p.st === 'panic' ? 1 : 0, r1(p.ph), p.shirt, p.skin]),
+      gg: gangs.map(g => [g.idx, g.s]),
+      bk: bikers.filter(b => b.st !== 'gone').map(b => [r0(b.x), r0(b.y), r2(b.a), r0(b.z), BIKER_ST.indexOf(b.st), b.charred ? 1 : 0, b.jacket, HEADS.indexOf(b.head), b.skin, b.bat ? 1 : 0, r1(b.ph), r0(b.vx), r0(b.vy), r0(b.vz)]),
+      bs: bikes.map(m => [r0(m.x), r0(m.y), r2(m.a), r0(m.z), m.color, m.wrecked ? 1 : 0, r1(m.fuse), r0(m.vx), r0(m.vy), r0(m.vz)]),
+      db: debris.slice(-60).map(o => [DEBRIS.indexOf(o.kind), r0(o.x), r0(o.y), r0(o.z), r2(o.a), o.color, r0(o.vx), r0(o.vy), r0(o.vz)]) };
+  }
+
+  function netTick(dt) {
+    if (NET.role === 'host' && NET.live) {
+      NET.sendT -= dt;
+      if (NET.sendT > 0) return;
+      NET.sendT = 0.05;
+      const snap = JSON.stringify(snapshot()), shared = NET.evq;
+      NET.evq = [];
+      for (const peer of NET.peers.values()) {
+        if (!peer.open) continue;
+        const mine = NET.pq[peer.pid] || []; NET.pq[peer.pid] = [];
+        const car = cars.find(c => c.remote && c.pid === peer.pid);
+        if (car && (car.kx || car.ky)) { mine.push(['K', r0(car.kx), r0(car.ky)]); car.kx = car.ky = 0; }
+        send(peer.fast, snap);
+        if (shared.length || mine.length) send(peer.rel, { t: 'e', e: shared.concat(mine) });
+      }
+    } else if (NET.role === 'guest' && NET.host && player && (state === 'race' || state === 'ending' || state === 'count')) {
+      NET.inT -= dt;
+      if (NET.inT > 0) return;
+      NET.inT = 1 / 30;
+      const b = (held('fire') ? 1 : 0) | (held('mine') ? 2 : 0) | (held('special') ? 4 : 0) | (player.turboOn ? 8 : 0);
+      send(NET.host.fast, { t: 'i', x: r1(player.x), y: r1(player.y), a: r2(player.a), vx: r0(player.vx), vy: r0(player.vy), tu: r0(player.turbo), b, wd: r1(NET.wallDmg) });
+      NET.wallDmg = 0;
+    }
+  }
+
+  function netEndRace() {
+    const rows = standings().map(c => ({ name: c.name, color: c.color, human: c.human, pid: c.pid, kills: c.kills,
+      status: c.dead ? 'Wrecked' : c.finished ? 'Finished' : 'Running', time: c.finished && c.lapTimes.length ? c.lapTimes[c.lapTimes.length - 1].toFixed(1) : '' }));
+    netBroadcast({ t: 'end', rows });
+    NET.live = false;
+    onlineResults(rows);
+  }
+  function netBackToLobby() {
+    attract();
+    onlineScreen('hosting');
+    netLobbyBroadcast();
+  }
+
+  // ---------- guest ----------
+  async function netJoin() {
+    readName();
+    const code = (($('netCode') || {}).value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length < 5) { onlineScreen('menu', 'Type the 5-letter room code the host gave you.'); return; }
+    netReset();
+    NET.role = 'guest'; NET.room = code;
+    NET.status = 'Looking for room ' + code + '…'; onlineScreen('joined');
+    try {
+      const clients = await brokerConnectAll();
+      if (NET.role !== 'guest') { for (const c of clients) c.end(true); return; }
+      NET.mq = clients; NET.topic = 'carnage-circuit/v1/' + code.slice(0, 5);
+      const id = Math.random().toString(36).slice(2, 12);
+      for (const cl of clients) {
+        cl.subscribe(NET.topic + '/g/' + id, { qos: 1 }, () => cl.publish(NET.topic + '/host', JSON.stringify({ t: 'join', id, name: netName }), { qos: 1 }));
+        cl.on('message', (t, m) => { let d; try { d = JSON.parse(m.toString()); } catch (_) { return; } guestSignal(d, id, cl); });
+      }
+      NET.joinTimer = setTimeout(() => { if (!NET.host || !NET.host.open) guestFail('No answer from room ' + code + '. Check the code, and make sure the host has the room open.'); }, 20000);
+    } catch (e) { guestFail(e.message); }
+  }
+  async function guestSignal(d, id, cl) {
+    if (d.t === 'refuse') return guestFail(d.why);
+    if (d.t !== 'offer' || NET.host) return;
+    const pc = new RTCPeerConnection({ iceServers: ICE });
+    NET.myPid = d.pid; NET.host = { pc, open: false };
+    pc.ondatachannel = e => {
+      const ch = e.channel; NET.host[ch.label] = ch;
+      ch.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch (_) { return; } guestRecv(m); };
+      if (ch.label === 'rel') {
+        ch.onopen = () => { NET.host.open = true; clearTimeout(NET.joinTimer); NET.status = 'Connected. Waiting for the host to start the race.'; if (state === 'lobby') onlineScreen('joined'); };
+        ch.onclose = () => { if (NET.role === 'guest') guestFail('Lost the connection to the host.'); };
+      }
+    };
+    pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') guestFail('Could not connect to the host directly. Some home or mobile networks block this; try another network.'); };
+    await pc.setRemoteDescription({ type: 'offer', sdp: d.sdp });
+    await pc.setLocalDescription(await pc.createAnswer());
+    await iceDone(pc);
+    cl.publish(NET.topic + '/host', JSON.stringify({ t: 'answer', id, sdp: pc.localDescription.sdp }), { qos: 1 });
+  }
+  function guestFail(why) {
+    if (NET.role !== 'guest') return;
+    const racing = state === 'race' || state === 'count' || state === 'ending' || state === 'netresults';
+    netReset();
+    if (racing) attract();
+    onlineScreen('menu', why);
+  }
+  function guestRecv(m) {
+    if (m.t === 's') applySnap(m);
+    else if (m.t === 'e') applyEvents(m.e);
+    else if (m.t === 'lobby') {
+      NET.lobby = m.players; NET.track = m.track;
+      if (state === 'netresults') attract();
+      if (state === 'lobby' || state === 'netresults') onlineScreen('joined');
+    }
+    else if (m.t === 'start') guestStart(m);
+    else if (m.t === 'end') onlineResults(m.rows);
+    else if (m.t === 'bye') guestFail('The host closed the room.');
+  }
+  function guestStart(m) {
+    career = { online: true, diff: m.diff, race: m.track, cash: 0 };
+    track = buildTrack(m.track);
+    decal = document.createElement('canvas'); decal.width = track.WW; decal.height = track.WH; dctx = decal.getContext('2d');
+    bullets = []; mines = []; peds = []; parts = []; floats = []; msgs = []; finishOrder = [];
+    resetWeapons();
+    cars = m.cars.map(o => {
+      const c = makeCar({ name: o.name, color: o.color, accent: o.accent }, { hp: 100, eng: o.eng, tire: o.tire, armor: o.armor, gun: o.gun, ammo: 0, mines: 0, spd: o.spd, grip: o.grip, line: o.line }, o.idx, 0);
+      Object.assign(c, { x: o.x, y: o.y, a: o.a, lap: o.lap, human: o.human, pid: o.pid, tx: o.x, ty: o.y, ta: o.a });
+      return c;
+    });
+    player = cars.find(c => c.human && c.pid === NET.myPid);
+    player.isPlayer = true;
+    pickups = m.pk.map(([idx, x, y, type]) => ({ idx, x, y, type, active: true, t: 0 }));
+    cam.x = player.x; cam.y = player.y;
+    raceT = 0; countT = 4; endT = 0; shake = 0;
+    state = 'count';
+    showPanel(null);
+    initAudio();
+  }
+  function applySnap(S) {
+    if (!track || !cars.length || state === 'netresults' || state === 'lobby') return;
+    if (S.st === 'count' || S.st === 'race' || S.st === 'ending') state = S.st;
+    raceT = S.rt; countT = S.ct;
+    S.cs.forEach((a, i) => {
+      const c = cars[i]; if (!c) return;
+      const [x, y, ang, vx, vy, hp, f, lap, idx, turbo, ammo, mines, rk, sk, fl, dr, sel, kills, burn, deadT] = a;
+      Object.assign(c, { hp, dead: !!(f & 1), finished: !!(f & 2), lap, ammo, mines, spSel: sel, kills, burnT: burn, deadT });
+      c.sp.rocket = rk; c.sp.seeker = sk; c.sp.flame = fl; c.sp.drum = dr;
+      if (f & 4) c.flameT = 0.1; if (f & 8) c.muzzle = 0.06; if (f & 64) c.flash = 0.08; if (f & 32) c.bloodT = Math.max(c.bloodT, 0.5);
+      c.turboOn = !!(f & 16);
+      // our own car drives itself here; only when it's wrecked does it follow the host
+      if (c === player && !c.dead) return;
+      Object.assign(c, { tx: x, ty: y, ta: ang, vx, vy, turbo });
+      if (c.idx === undefined || hyp(x - c.x, y - c.y) > 150) { c.x = x; c.y = y; c.a = ang; c.idx = idx; }
+    });
+    finishOrder = S.fo.map(i => cars[i]).filter(Boolean);
+    rockets = S.rk.map(([x, y, a, k]) => ({ x, y, a, kind: k ? 'seeker' : 'rocket' }));
+    mines = S.mn.map(([x, y, arm, t]) => ({ x, y, arm, t }));
+    drums = S.dr.map(([x, y, fuse]) => ({ x, y, fuse, a: 0 }));
+    fires = S.fi.map(([x, y, r, t, max]) => ({ x, y, r, t, max }));
+    S.pk.forEach((t, i) => { const k = pickups[i]; if (k) { k.active = !!t; if (t) k.type = t; } });
+    peds = S.pd.map(([x, y, dir, panic, ph, shirt, skin]) => ({ x, y, dir, st: panic ? 'panic' : 'idle', ph, shirt, skin }));
+    gangs = S.gg.map(([idx, s]) => ({ idx, s, p: track.pts[idx] }));
+    bikers = S.bk.map(([x, y, a, z, st, ch, jacket, head, skin, bat, ph, vx, vy, vz]) => ({ x, y, a, z, st: BIKER_ST[st], charred: !!ch, jacket, head: HEADS[head], skin, bat: !!bat, ph, vx, vy, vz }));
+    bikes = S.bs.map(([x, y, a, z, color, wr, fuse, vx, vy, vz]) => ({ x, y, a, z, color, wrecked: !!wr, fuse, vx, vy, vz }));
+    debris = S.db.map(([k, x, y, z, a, color, vx, vy, vz]) => ({ kind: DEBRIS[k], x, y, z, a, color, vx, vy, vz }));
+  }
+  function applyEvents(list) {
+    for (const e of list) {
+      switch (e[0]) {
+        case 'P': burst(e[1], e[2], e[3], e[4]); break;
+        case 'B': bloodSplat(e[1], e[2], e[3], e[4]); break;
+        case 'D': scorch(e[1], e[2], e[3], e[4], e[5], e[6]); break;
+        case 'G': goreSpot(e[1], e[2], e[3], e[4], e[5], e[6], false); break;
+        case 'F': floats.push({ x: e[1], y: e[2], text: e[3], color: e[4], life: 1 }); break;
+        case 'M': msg(e[1], e[2], true); break;
+        case 'W': { const v = cars[e[1]], k = cars[e[2]]; if (v && v !== player) msg(wreckText(v, k), k === player ? HAZ : INK, true); break; }
+        case 'b': bullets.push({ x: e[1], y: e[2], vx: e[3], vy: e[4], life: 0.55, age: 0 }); break;
+        case 'K': if (player) { player.vx += e[1]; player.vy += e[2]; } break;
+        case 'N': if (player) player.turbo = Math.min(100, player.turbo + e[1]); break;
+        case 's': {
+          const name = e[1], play = name === 'yelp' ? yelp : sfx[name];
+          if (!play) break;
+          if (e.length === 5) { const v = e[4] * near(e[2], e[3]); play(v); if (name === 'boom') shake = Math.max(shake, 12 * v); }
+          else play(e[2]);
+          break;
+        }
+      }
+    }
+  }
+  // the guest's frame: drive our own car, smooth everyone else between snapshots, play the effects
+  function guestUpdate(dt) {
+    const live = state === 'race' || state === 'ending';
+    for (const c of cars) {
+      c.muzzle -= dt; c.flash -= dt; c.flameT -= dt; c.bloodT -= dt;
+      if (c === player && !c.dead) {
+        let ctl = { thr: 0, steer: 0 };
+        if (live) ctl = c.finished ? aiControl(c, dt) : {
+          thr: (held('gas') ? 1 : 0) - (held('brake') ? 1 : 0), steer: (held('right') ? 1 : 0) - (held('left') ? 1 : 0), turbo: held('turbo') };
+        c.turboOn = !!(ctl.turbo && c.turbo > 0 && ctl.thr > 0);
+        drive(c, ctl, dt);
+        c.x += c.vx * dt; c.y += c.vy * dt;
+        trackClamp(c, 14);
+      } else {
+        c.tx += c.vx * dt; c.ty += c.vy * dt;
+        const k = Math.min(1, dt * 12);
+        c.x += (c.tx - c.x) * k; c.y += (c.ty - c.y) * k; c.a = wrap(c.a + wrap(c.ta - c.a) * k);
+        c.idx = nearest(c.x, c.y, c.idx, 26);
+        const ca = Math.cos(c.a), sa = Math.sin(c.a), lat = -c.vx * sa + c.vy * ca;
+        if (!c.dead && (Math.abs(lat) > 75 || c.bloodT > 0 && gore && hyp(c.vx, c.vy) > 40)) {
+          dctx.fillStyle = c.bloodT > 0 && gore ? 'rgba(130,8,8,.3)' : 'rgba(18,14,12,.22)';
+          for (const s of [-8, 8]) dctx.fillRect(c.x - ca * 12 - sa * s - 2, c.y - sa * 12 + ca * s - 2, 4, 4);
+        }
+        if (c.turboOn && Math.random() < 0.7) parts.push({ x: c.x - ca * 20, y: c.y - sa * 20, vx: -ca * 80, vy: -sa * 80, life: 0.18, max: 0.18, kind: 'fire', size: rand(3, 6) });
+      }
+      const ca = Math.cos(c.a), sa = Math.sin(c.a);
+      if (c.flameT > 0) for (let i = 0; i < 3; i++) { const a = c.a + rand(-0.22, 0.22), s = rand(320, 470); parts.push({ x: c.x + ca * 22, y: c.y + sa * 22, vx: c.vx + Math.cos(a) * s, vy: c.vy + Math.sin(a) * s, life: rand(0.2, 0.32), max: 0.32, kind: 'flame', size: rand(4, 8) }); }
+      if (c.burnT > 0 && Math.random() < 0.6) parts.push({ x: c.x + rand(-9, 9), y: c.y + rand(-6, 6), vx: rand(-15, 15), vy: rand(-40, -10), life: 0.35, max: 0.35, kind: 'fire', size: rand(3, 7) });
+      if (c.dead) {
+        if (Math.random() < 0.35) parts.push({ x: c.x + rand(-6, 6), y: c.y + rand(-6, 6), vx: rand(-10, 10), vy: rand(-25, -5), life: 1.4, max: 1.4, kind: 'smoke', size: rand(6, 11) });
+        if (Math.random() < 0.2) parts.push({ x: c.x + rand(-8, 8), y: c.y + rand(-5, 5), vx: 0, vy: -20, life: 0.4, max: 0.4, kind: 'fire', size: rand(3, 6) });
+      } else if (c.hp < 45 && Math.random() < (45 - c.hp) / 60) parts.push({ x: c.x - ca * 6, y: c.y - sa * 6, vx: rand(-10, 10), vy: rand(-10, 10), life: 1, max: 1, kind: 'smoke', size: rand(4, 8) });
+    }
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i]; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; b.age += dt;
+      if (b.life <= 0 || b.age > 0.04 && cars.some(c => !c.dead && hyp(c.x - b.x, c.y - b.y) < 14)) bullets.splice(i, 1);
+    }
+    // flying bodies, limbs and bikes keep moving between snapshots
+    for (const o of [...bikers, ...bikes, ...debris]) {
+      if (!(o.z > 0 || o.vz > 0)) continue;
+      o.x += (o.vx || 0) * dt; o.y += (o.vy || 0) * dt; o.vz -= 900 * dt; o.z = Math.max(0, o.z + o.vz * dt);
+    }
+    for (const r of rockets) { r.x += Math.cos(r.a) * 620 * dt; r.y += Math.sin(r.a) * 620 * dt; if (Math.random() < 0.85) parts.push({ x: r.x - Math.cos(r.a) * 9, y: r.y - Math.sin(r.a) * 9, vx: rand(-15, 15), vy: rand(-15, 15), life: 0.55, max: 0.55, kind: 'smoke', size: rand(3, 5) }); }
+    for (const m of mines) m.t += dt;
+    for (const d of drums) if (Math.random() < 0.5) parts.push({ x: d.x + rand(-4, 4), y: d.y + rand(-4, 4), vx: rand(-8, 8), vy: rand(-30, -10), life: 0.35, max: 0.35, kind: 'fire', size: rand(3, 6) });
+    for (const f of fires) if (Math.random() < 0.9) { const a = rand(0, 6.28), r = Math.sqrt(Math.random()) * f.r; parts.push({ x: f.x + Math.cos(a) * r, y: f.y + Math.sin(a) * r, vx: rand(-6, 6), vy: rand(-35, -12), life: 0.45, max: 0.45, kind: 'fire', size: rand(4, 9) }); }
+    for (const b of bikers) if (b.st === 'burning' && Math.random() < 0.8) parts.push({ x: b.x + rand(-4, 4), y: b.y + rand(-4, 4), vx: rand(-10, 10), vy: rand(-40, -15), life: 0.35, max: 0.35, kind: 'fire', size: rand(3, 6) });
+    tickCosmetics(dt);
+    const tx = player.x + player.vx * 0.32, ty = player.y + player.vy * 0.32;
+    cam.x += (tx - cam.x) * Math.min(1, dt * 5); cam.y += (ty - cam.y) * Math.min(1, dt * 5);
+    shake = Math.max(0, shake - dt * 30);
+  }
+
+  // ---------- screens ----------
+  function onlineScreen(view, note = '') {
+    state = 'lobby';
+    NET.view = view;
+    const players = NET.lobby.map(p => `<li>${dot(HUMAN_COLORS[p.pid][0])}${esc(p.name)}${p.pid === NET.myPid && NET.role ? ' <span class="ds">(you)</span>' : ''}${p.pid === 0 ? ' <span class="ds">· host</span>' : ''}</li>`).join('');
+    let body = '';
+    if (view === 'menu') body = `
+      <label class="field"><span class="eyebrow">Your name</span><input id="netName" maxlength="14" value="${esc(netName)}" placeholder="Driver name" autocomplete="off"></label>
+      <div class="row"><button class="go" data-act="net:host">Host a race</button></div>
+      <div class="row join"><label class="field"><span class="eyebrow">Room code</span><input id="netCode" maxlength="6" placeholder="ABCDE" autocomplete="off" spellcheck="false"></label><button data-act="net:join">Join</button></div>
+      <p class="ds">Up to 4 drivers; empty seats get rivals. Free public relays (HiveMQ, EMQX, Mosquitto) only introduce the browsers to each other; the race itself runs directly between you over WebRTC.</p>
+      <div class="row"><button data-act="net:back">Back</button></div>`;
+    else if (view === 'hosting') body = `
+      <div class="room"><span class="eyebrow">Room code</span><b class="code">${NET.room ? esc(NET.room) : '·····'}</b>${NET.room ? '<button data-act="net:copy">Copy</button>' : ''}</div>
+      <ul class="plist">${players}</ul>
+      <div class="seg-wrap"><span class="eyebrow">Track</span><div class="seg">${TRACKS.map((t, i) => `<button data-act="net:track:${i}" aria-pressed="${i === NET.track}">${t.name}</button>`).join('')}</div></div>
+      <div class="seg-wrap"><span class="eyebrow">Rivals in empty seats</span>${diffPicker(pickedDiff)}</div>
+      <div class="row"><button class="go" data-act="net:start" ${NET.room ? '' : 'disabled'}>Start race</button><button data-act="net:leave">Close room</button></div>`;
+    else if (view === 'joined') body = `
+      <ul class="plist">${players || '<li class="ds">Connecting…</li>'}</ul>
+      ${NET.host && NET.host.open ? `<p class="lede">Track: ${esc(TRACKS[NET.track].name)}</p>` : ''}
+      <div class="row"><button data-act="net:leave">Leave</button></div>`;
+    const title = view === 'hosting' ? 'Your room' : view === 'joined' ? 'Room ' + esc(NET.room) : 'Race your friends';
+    showPanel(`<div class="stack online">
+      <div class="hazard"></div>
+      <p class="eyebrow">Online race</p>
+      <h2>${title}</h2>
+      ${NET.status ? `<p class="lede">${esc(NET.status)}</p>` : ''}
+      ${note ? `<p class="lede dead">${esc(note)}</p>` : ''}
+      ${body}
+    </div>`);
+  }
+  function onlineResults(rows) {
+    state = 'netresults';
+    const mine = rows.findIndex(r => r.human && r.pid === NET.myPid);
+    const me = rows[mine];
+    showPanel(`<div class="stack">
+      <p class="eyebrow">Online race · ${esc(TRACKS[NET.role === 'host' ? NET.track : career.race].name)}</p>
+      <div class="row" style="gap:18px;align-items:flex-end">
+        <span class="big-place ${me && me.status === 'Wrecked' ? 'dead' : ''}">${me ? (me.status === 'Wrecked' ? 'WRECKED' : ordinal(mine + 1).toUpperCase()) : 'DONE'}</span>
+      </div>
+      <div class="card"><table>
+        <thead><tr><th>#</th><th>Driver</th><th>Status</th><th class="n">Time</th><th class="n">Kills</th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr class="${r.human && r.pid === NET.myPid ? 'me' : ''}"><td>${i + 1}</td><td>${dot(r.color)}${esc(r.name)}${r.human ? '' : ' <span class="ds">(rival)</span>'}</td><td>${r.status === 'Wrecked' ? '<span class="dead">Wrecked</span>' : r.status}</td><td class="n">${r.time ? r.time + ' s' : ''}</td><td class="n">${r.kills}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <div class="row">${NET.role === 'host' ? '<button class="go" data-act="net:lobby">Back to the lobby</button><button data-act="net:leave">Close room</button>' : '<p class="lede">Waiting for the host…</p><button data-act="net:leave">Leave</button>'}</div>
+    </div>`);
+  }
+  function netAction(act) {
+    const [, cmd, arg] = act.split(':');
+    if (cmd === 'menu') { if (!NET.role) { NET.status = ''; NET.lobby = []; } onlineScreen(NET.role === 'host' ? 'hosting' : NET.role === 'guest' ? 'joined' : 'menu'); }
+    else if (cmd === 'back') titleScreen();
+    else if (cmd === 'host') netHost();
+    else if (cmd === 'join') netJoin();
+    else if (cmd === 'copy') {
+      const done = () => { NET.status = 'Code copied. Send it to your friends.'; onlineScreen('hosting'); };
+      try { navigator.clipboard.writeText(NET.room).then(done, () => {}); } catch (_) {}
+    }
+    else if (cmd === 'track') { NET.track = +arg; netLobbyBroadcast(); onlineScreen('hosting'); }
+    else if (cmd === 'start') netStartRace();
+    else if (cmd === 'leave') netLeave();
+    else if (cmd === 'lobby') netBackToLobby();
+  }
+
   // ================= attract mode behind the title =================
   function attract() {
-    career = freshCareer();
+    career = { ...freshCareer(), attract: true };
     track = buildTrack(0);
     decal = document.createElement('canvas'); decal.width = track.WW; decal.height = track.WH; dctx = decal.getContext('2d');
     const N = track.N;
@@ -1674,11 +2248,12 @@ tr.me td{color:var(--haz);font-weight:700}
   let last = 0;
   function frame(ts) {
     const dt = Math.min(0.033, last ? (ts - last) / 1000 : 0); last = ts;
-    if (state === 'race' || state === 'count' || state === 'ending') update(dt);
-    else if (state === 'title' || state === 'credits') attractUpdate(dt);
+    const racing = state === 'race' || state === 'count' || state === 'ending';
+    if (racing) { if (NET.role === 'guest') guestUpdate(dt); else update(dt); }
+    else if (state === 'title' || state === 'credits' || state === 'lobby') attractUpdate(dt);
+    netTick(dt);
     updateAudio();
-    if (state === 'title' || state === 'credits' || state === 'paused' || state === 'race' || state === 'count' || state === 'ending') render();
-    else if (state === 'garage' || state === 'results' || state === 'champ') render();
+    render();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

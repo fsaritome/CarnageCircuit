@@ -13,10 +13,15 @@ the way they are and `docs/ROADMAP.md` for what's next.
 - Run `node tools/check.mjs index.html` before every commit.
 - Commit messages end with a `Co-Authored-By: Claude ...` line.
 
+## Branches
+
+- `dev`: single-player work. `multiplayer`: online play (preview /mp/, separate saves with suffix -mp).
+- Every branch's workflow builds all three previews, so keep `.github/workflows/pages.yml` identical on all branches.
+
 ## Testing on the dev preview
 
 - The dev build exposes `window.__cc` (state, cars, player, raceT, gangs, bikers, bikes, debris,
-  explode(x, y)). It only exists under `/dev/`.
+  net, explode(x, y)). It only exists on the previews (`/dev/`, `/mp/`).
 - The built-in browser pane throttles `requestAnimationFrame` to 0 fps when hidden. Reload the page
   with the loop swapped to timers:
   fetch `/CarnageCircuit/dev/`, replace `requestAnimationFrame(frame)` with
@@ -34,7 +39,9 @@ the way they are and `docs/ROADMAP.md` for what's next.
 - Physics: `drive`, `trackClamp`, `phys` (flying bodies/bikes)
 - Weapons: `fire`, `dropMine`, `useSpecial`, `SPECIALS`, `explode`, `blast`
 - Bikers: `spawnGang`, `updateGang`, `killBiker`, `gibBiker`
-- Blood switch: `gore`, `yelp`, `bloodSplat`
+- Blood switch: `gore`, `yelp`, `bloodSplat`, `goreSpot`, `scorch`
+- Online: `NET`, `netHost`, `netJoin`, `brokerConnectAll`, `netStartRace`, `remoteCar`, `snapshot`, `netTick`, `applySnap`, `applyEvents`, `guestUpdate`, `onlineScreen`
+- Multiplayer test: open /mp/ in two browser tabs (patch both loops as above); `window.__cc.net` exposes the network state
 - Screens: `titleScreen`, `garage`, `endRace`, `champScreen`, `creditsScreen`
 
 ## Boundaries agreed with the user

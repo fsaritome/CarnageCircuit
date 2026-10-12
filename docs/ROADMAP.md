@@ -14,23 +14,16 @@
 - Weapon damage after the second cut: too weak now, or right?
 - Biker roadblock: is the gap fair, is the slowdown from running them over too harsh?
 
-## Multiplayer (discussed, not started)
+## Multiplayer
 
-Recommended order:
-
-1. **Local split-screen** (start here). Two humans on one computer: WASD vs arrows or a gamepad,
-   two camera views side by side. No servers. Main work: the code assumes one `player` everywhere
-   (camera, HUD, controls, catch-up, career, results), so refactor to a list of human players first.
-   Estimated one solid session.
-2. **Online with room codes** on top of that. Host-authoritative: the host simulates, guests send inputs,
-   host broadcasts state ~20×/s, guests interpolate. WebRTC via PeerJS's free public broker (no server
-   to run, but it's a third-party free service). Hard parts: guest input lag (needs prediction), syncing
-   debris and bikers efficiently, disconnects. A few sessions plus testing with real people on two
-   machines.
-3. **Own game server** (Cloudflare Workers / Durable Objects or a small VPS): most reliable, costs
-   hosting. Only worth it with many players.
-
-Note: claude.ai artifacts block WebRTC, but GitHub Pages is fine.
+- **Online with room codes: built** on the `multiplayer` branch, preview at https://fsaritome.github.io/CarnageCircuit/mp/
+  (see DECISIONS.md). Tested with two browser tabs: connect in ~4 s, guest driving, damage sync,
+  results, back to the lobby, second race.
+- Needs: a test between two real computers on different networks; then merge `multiplayer` → `dev` → `main`.
+- Possible next steps: a TURN fallback for strict networks (needs a hosted service), copy-paste invite
+  codes as a no-relay fallback, spectating after you finish, guest-side smoothing tweaks, chat/emotes,
+  online championships with money and the garage.
+- **Local split-screen** is still not built.
 
 ## Gadget ideas not built yet
 
