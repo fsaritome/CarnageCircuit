@@ -108,3 +108,27 @@ Test result before the last easing: a bot driving the player's car at 88% of the
 - `main` is protected: required status check `check`, strict, enforced for admins, no force pushes, no
   deletion. Changes reach main through a pull request from `dev`.
 - The dev build uses separate save slots (`-dev` suffix) and shows a red DEV BUILD tag.
+
+## Online multiplayer (branch `multiplayer`, preview https://fsaritome.github.io/CarnageCircuit/mp/)
+
+- **No server of our own.** GitHub can't coordinate: writes need an auth token, which can't live in a
+  public page, and GitHub's login endpoints don't allow browser calls. Instead:
+  - **Matchmaking** goes through free public MQTT relays (HiveMQ, EMQX, Mosquitto) over secure WebSockets,
+    keyed by a 5-letter room code. Host and guests connect to all three at once, retrying each up to three
+    times, because a single relay sometimes ignores a connection ("connack timeout"). The relays only
+    carry the WebRTC offer/answer (which includes IP addresses), nothing about the race.
+  - **The race** runs browser to browser over WebRTC data channels: `rel` (reliable, ordered) for
+    events and lobby, `fast` (unordered, no retransmits) for snapshots and inputs. STUN only (Google,
+    Cloudflare), no TURN, so some strict networks (symmetric NAT / CGNAT) can't connect.
+- **Host-authoritative.** The host simulates rivals, damage, weapons, bikers and laps, and sends a
+  snapshot 20×/s plus effect events (blood, bursts, scorch marks, positional sounds, floats, messages,
+  bullets, wreck notices). Guests drive their own car locally (no input lag), report it 30×/s with
+  their fire/mine/special/nitro buttons and any wall damage, and receive "kicks" when the host knocks
+  their car around (rams, explosions, running over bikers).
+- Personal feedback (YOU ARE WRECKED, lap callouts, pickup sounds) goes only to its player. Each player's
+  blood switch decides what they see.
+- Online races are one-offs: up to 4 humans, empty seats get rivals at the host's chosen difficulty,
+  everyone gets a standard car (engine 2, tires 2, armor 1, gun 1, a pack of specials). No career money.
+  No pause in shared races. A disconnected guest's car is taken over by the AI.
+- Fixed along the way: Back on the Credits screen used to save the title screen's demo career over the
+  real championship save.

@@ -36,6 +36,7 @@ Touch devices get on-screen buttons.
 - Special weapons: rockets, heat seekers, flamethrower, burning oil drums
 - Final lap: the Iron Vultures biker gang blocks the track. Run them over, burn them, or blow them sky high
 - Prize money, kill bonuses, upgrades, repairs, championship points
+- Online races with friends (multiplayer branch): host a room, share the 5-letter code, race browser to browser over WebRTC
 - Blood on/off switch (bottom bar): off swaps blood, gibs and screams for dust puffs and cartoon bonks
 - Career progress saved in the browser (localStorage)
 - Synthesized sound effects via the Web Audio API
