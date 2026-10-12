@@ -15,13 +15,13 @@ the way they are and `docs/ROADMAP.md` for what's next.
 
 ## Branches
 
-- : single-player work. : online play (preview /mp/, separate saves with suffix -mp).
-- Every branch's workflow builds all three previews, so keep  identical on all branches.
+- `dev`: single-player work. `multiplayer`: online play (preview /mp/, separate saves with suffix -mp).
+- Every branch's workflow builds all three previews, so keep `.github/workflows/pages.yml` identical on all branches.
 
 ## Testing on the dev preview
 
 - The dev build exposes `window.__cc` (state, cars, player, raceT, gangs, bikers, bikes, debris,
-  explode(x, y)). It only exists under `/dev/`.
+  net, explode(x, y)). It only exists on the previews (`/dev/`, `/mp/`).
 - The built-in browser pane throttles `requestAnimationFrame` to 0 fps when hidden. Reload the page
   with the loop swapped to timers:
   fetch `/CarnageCircuit/dev/`, replace `requestAnimationFrame(frame)` with

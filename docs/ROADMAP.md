@@ -16,10 +16,10 @@
 
 ## Multiplayer
 
-- **Online with room codes: built** on the  branch, preview at https://fsaritome.github.io/CarnageCircuit/mp/
+- **Online with room codes: built** on the `multiplayer` branch, preview at https://fsaritome.github.io/CarnageCircuit/mp/
   (see DECISIONS.md). Tested with two browser tabs: connect in ~4 s, guest driving, damage sync,
   results, back to the lobby, second race.
-- Needs: a test between two real computers on different networks; then merge  →  → .
+- Needs: a test between two real computers on different networks; then merge `multiplayer` → `dev` → `main`.
 - Possible next steps: a TURN fallback for strict networks (needs a hosted service), copy-paste invite
   codes as a no-relay fallback, spectating after you finish, guest-side smoothing tweaks, chat/emotes,
   online championships with money and the garage.
